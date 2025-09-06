@@ -17,6 +17,7 @@ export class Level {
   meshes: THREE.Object3D[] = [];
   bodies: CANNON.Body[] = [];
   spawnPoints: THREE.Vector3[] = [];
+  dynamicPairs: { mesh: THREE.Object3D, body: CANNON.Body }[] = [];
 
   constructor(
     public world: CANNON.World,
@@ -42,6 +43,15 @@ export class Level {
     floorMesh.receiveShadow = true;
     scene.add(floorMesh);
     this.meshes.push(floorMesh);
+  }
+
+  update(dt: number) {
+    for (const p of this.dynamicPairs) {
+      const bp = p.body.position as any;
+      const bq = p.body.quaternion as any;
+      p.mesh.position.set(bp.x, bp.y, bp.z);
+      (p.mesh as any).quaternion && (p.mesh as any).quaternion.set(bq.x, bq.y, bq.z, bq.w);
+    }
   }
 
   dispose() {
@@ -527,6 +537,15 @@ export class Level {
       }
       return false
     }
+    // Track couch footprints placed in this level to avoid intersections
+    const couchRects: { x: number, z: number, halfX: number, halfZ: number }[] = [];
+    const rectIntersects = (x: number, z: number, halfX: number, halfZ: number) => {
+      const pad = 0.04;
+      for (const r of couchRects) {
+        if (!(x + halfX + pad < r.x - r.halfX || x - halfX - pad > r.x + r.halfX || z + halfZ + pad < r.z - r.halfZ || z - halfZ - pad > r.z + r.halfZ)) return true;
+      }
+      return false;
+    };
 
     const placeCouchAlongWall = (room: THREE.Box3, openings: THREE.Vector3[]): number => {
       // 1.5x larger couch
@@ -554,28 +573,28 @@ export class Level {
           const maxX = room.max.x - 0.6 - length/2;
           x = randRange(minX, Math.max(minX, maxX));
           yaw = Math.PI;
-          if (!wouldBlockDoor(room, openings, wall, x, length/2)) { foundPos = true; break; }
+          if (!wouldBlockDoor(room, openings, wall, x, length/2) && !rectIntersects(x, z, length/2, depth/2)) { foundPos = true; break; }
         } else if (wall === 1) { // South: back toward -Z => yaw = 0
           z = room.min.z + (depth/2 + gap);
           const minX = room.min.x + 0.6 + length/2;
           const maxX = room.max.x - 0.6 - length/2;
           x = randRange(minX, Math.max(minX, maxX));
           yaw = 0;
-          if (!wouldBlockDoor(room, openings, wall, x, length/2)) { foundPos = true; break; }
+          if (!wouldBlockDoor(room, openings, wall, x, length/2) && !rectIntersects(x, z, length/2, depth/2)) { foundPos = true; break; }
         } else if (wall === 2) { // East: back toward +X => yaw = -PI/2
           x = room.max.x - (depth/2 + gap);
           const minZ = room.min.z + 0.6 + length/2;
           const maxZ = room.max.z - 0.6 - length/2;
           z = randRange(minZ, Math.max(minZ, maxZ));
           yaw = -Math.PI/2;
-          if (!wouldBlockDoor(room, openings, wall, z, length/2)) { foundPos = true; break; }
+          if (!wouldBlockDoor(room, openings, wall, z, length/2) && !rectIntersects(x, z, depth/2, length/2)) { foundPos = true; break; }
         } else { // West: back toward -X => yaw = +PI/2
           x = room.min.x + (depth/2 + gap);
           const minZ = room.min.z + 0.6 + length/2;
           const maxZ = room.max.z - 0.6 - length/2;
           z = randRange(minZ, Math.max(minZ, maxZ));
           yaw = Math.PI/2;
-          if (!wouldBlockDoor(room, openings, wall, z, length/2)) { foundPos = true; break; }
+          if (!wouldBlockDoor(room, openings, wall, z, length/2) && !rectIntersects(x, z, depth/2, length/2)) { foundPos = true; break; }
       }
       if (!foundPos) return 0;
       }
@@ -585,6 +604,16 @@ export class Level {
       // doorway corridor check for main couch
       if (wouldBlockDoorCorridor(room, openings, x, z, yaw, length, depth)) return 0;
       this.scene.add(couch); this.meshes.push(couch);
+      // record main couch footprint
+      const halfXMain = (Math.abs(Math.sin(yaw)) > 0.5) ? depth/2 : length/2;
+      const halfZMain = (Math.abs(Math.sin(yaw)) > 0.5) ? length/2 : depth/2;
+      couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
+      // record main couch footprint
+      {
+        const halfXMain = (Math.abs(Math.sin(yaw)) > 0.5) ? depth/2 : length/2;
+        const halfZMain = (Math.abs(Math.sin(yaw)) > 0.5) ? length/2 : depth/2;
+        couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
+      }
 
       // Physics proxy box for couch
       const physLen = length;
@@ -642,13 +671,20 @@ export class Level {
             if (c2.z - dep2/2 < room.min.z + 0.5 || c2.z + dep2/2 > room.max.z - 0.5) continue;
             if (wouldBlockDoorCorridor(room, openings, c2.x, c2.z, yaw2, len2, dep2)) continue;
 
-            couch2.position.set(c2.x, 0, c2.z); couch2.rotation.y = yaw2;
-            this.scene.add(couch2); this.meshes.push(couch2);
-            const shape2 = new CANNON.Box(new CANNON.Vec3((Math.abs(Math.sin(yaw2))>0.5?dep2:len2)/2, h2/2, (Math.abs(Math.sin(yaw2))>0.5?len2:dep2)/2));
-            const body2 = new CANNON.Body({ mass: 0, shape: shape2 });
-            body2.position.set(c2.x, h2/2, c2.z); if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
-            this.world.addBody(body2); this.bodies.push(body2);
-            placed = true; placedCount += 1; break;
+            // avoid intersecting existing couches
+            {
+              const halfX2 = (Math.abs(Math.sin(yaw2)) > 0.5) ? dep2/2 : len2/2;
+              const halfZ2 = (Math.abs(Math.sin(yaw2)) > 0.5) ? len2/2 : dep2/2;
+              if (rectIntersects(c2.x, c2.z, halfX2, halfZ2)) continue;
+              couch2.position.set(c2.x, 0, c2.z); couch2.rotation.y = yaw2;
+              this.scene.add(couch2); this.meshes.push(couch2);
+              const shape2 = new CANNON.Box(new CANNON.Vec3((Math.abs(Math.sin(yaw2))>0.5?dep2:len2)/2, h2/2, (Math.abs(Math.sin(yaw2))>0.5?len2:dep2)/2));
+              const body2 = new CANNON.Body({ mass: 0, shape: shape2 });
+              body2.position.set(c2.x, h2/2, c2.z); if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
+              this.world.addBody(body2); this.bodies.push(body2);
+              couchRects.push({ x: c2.x, z: c2.z, halfX: halfX2, halfZ: halfZ2 });
+              placed = true; placedCount += 1; break;
+            }
           }
           if (placed) break;
         }
@@ -702,6 +738,7 @@ export class Level {
         body.angularDamping = 0.25; body.linearDamping = 0.02;
         body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
         this.world.addBody(body); this.bodies.push(body);
+        this.dynamicPairs.push({ mesh, body });
       } else {
         // Upright cylinder clutter
         const baseR = randRange(0.06, 0.12);
@@ -721,6 +758,7 @@ export class Level {
         body.angularDamping = 0.25; body.linearDamping = 0.02;
         body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
         this.world.addBody(body); this.bodies.push(body);
+        this.dynamicPairs.push({ mesh, body });
       }
     }
   }

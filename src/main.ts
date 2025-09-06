@@ -149,6 +149,7 @@ function loop() {
   world.step(1 / 60, dt, 3);
 
   // update entities
+  level.update(dt);
   cat.update(
     dt,
     camera,
