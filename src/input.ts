@@ -3,6 +3,7 @@ export class Input {
   mouseDelta = { x: 0, y: 0 };
   wheelDelta = 0;
   lockPounce = false;
+  sensitivity = 1.0;
 
   constructor(private dom: HTMLElement | Document = document) {
     this.bind();

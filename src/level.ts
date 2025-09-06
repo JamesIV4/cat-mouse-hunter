@@ -155,22 +155,36 @@ export class Level {
         [corners[3], corners[0]],
       ] as const;
       for (const [a, b] of edges) {
-        // potential opening mid point near center
-        const doorCenter = new THREE.Vector3()
-          .addVectors(a, b)
-          .multiplyScalar(0.5);
-        // If an opening is requested close to this edge, leave a gap
-        const gap = openings.find(
-          (o) => new THREE.Vector3().subVectors(o, doorCenter).length() < 0.5
-        );
-        if (gap) {
-          // split wall into two segments around a door (1.2m)
-          const dir = new THREE.Vector3().subVectors(b, a).normalize();
-          const half = 0.6;
-          const leftEnd = doorCenter.clone().addScaledVector(dir, -half);
-          const rightStart = doorCenter.clone().addScaledVector(dir, half);
-          addWall(a, leftEnd, wallHeight);
-          addWall(rightStart, b, wallHeight);
+        // Find an opening that lies along this edge segment (within tolerance)
+        const edgeDir = new THREE.Vector3().subVectors(b, a);
+        const len = edgeDir.length();
+        const dir = edgeDir.clone().normalize();
+        const tol = 0.15; // perpendicular tolerance to consider on-edge
+        let chosenCenter: THREE.Vector3 | null = null;
+        for (const o of openings) {
+          const ap = new THREE.Vector3().subVectors(o, a);
+          const t = ap.dot(dir) / len; // param along edge
+          if (t <= 0.05 || t >= 0.95) continue; // avoid cutting doors at corners
+          // perpendicular distance to edge
+          const closest = a.clone().addScaledVector(dir, t * len);
+          const perp = o.clone().sub(closest);
+          if (Math.abs(perp.x) + Math.abs(perp.z) < tol) { // approx distance in XZ
+            chosenCenter = closest; break;
+          }
+        }
+        if (chosenCenter) {
+          // split wall into two segments around a door
+          const doorHalf = 0.6; // ~1.2m wide doorway
+          const leftEnd = chosenCenter.clone().addScaledVector(dir, -doorHalf);
+          const rightStart = chosenCenter.clone().addScaledVector(dir, doorHalf);
+          // Clamp to segment
+          const clampPoint = (p: THREE.Vector3) => new THREE.Vector3(
+            THREE.MathUtils.clamp(p.x, Math.min(a.x, b.x), Math.max(a.x, b.x)),
+            p.y,
+            THREE.MathUtils.clamp(p.z, Math.min(a.z, b.z), Math.max(a.z, b.z))
+          );
+          addWall(a, clampPoint(leftEnd), wallHeight);
+          addWall(clampPoint(rightStart), b, wallHeight);
         } else {
           addWall(a, b, wallHeight);
         }

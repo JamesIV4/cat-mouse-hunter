@@ -42,6 +42,34 @@ const world = createWorld();
 
 const input = new Input(document);
 
+// Pointer lock for seamless mouse look
+const canvas = renderer.domElement;
+canvas.style.outline = 'none';
+canvas.tabIndex = 0;
+canvas.addEventListener('click', () => {
+  if (document.pointerLockElement !== canvas) {
+    canvas.requestPointerLock();
+  }
+});
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === canvas;
+  const hint = document.getElementById('lockHint') as HTMLElement | null;
+  if (hint) hint.style.display = locked ? 'none' : 'block';
+});
+
+// Sensitivity slider
+const sens = document.getElementById('sensitivity') as HTMLInputElement | null;
+const sensLabel = document.getElementById('sensitivityLabel') as HTMLElement | null;
+if (sens) {
+  const applySens = () => {
+    const v = Number(sens.value);
+    input.sensitivity = isNaN(v) ? 1 : v;
+    if (sensLabel) sensLabel.textContent = `${input.sensitivity.toFixed(2)}x`;
+  };
+  applySens();
+  sens.addEventListener('input', applySens);
+}
+
 const level = new Level(world, scene);
 let currentLevel = 1;
 
@@ -130,17 +158,11 @@ function loop() {
   const catPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
   for (const m of mice) m.update(dt, catPos);
 
-  // catch detection
+  // catch detection: touching a mouse despawns and scores
   for (const m of mice) {
     if (!m.alive) continue;
     const d = m.mesh.position.distanceTo(cat.mesh.position);
-    if (
-      d < 0.6 &&
-      (cat.state === "Pounce" ||
-        cat.state === "Run" ||
-        cat.state === "Walk" ||
-        cat.state === "Sneak")
-    ) {
+    if (d < 0.6) {
       m.kill();
       caught++;
       remaining--;

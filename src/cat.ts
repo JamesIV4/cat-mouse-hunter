@@ -30,7 +30,7 @@ export class CatController {
       shape,
       position: new CANNON.Vec3(origin.x, origin.y + 0.7, origin.z),
     });
-    this.body.linearDamping = 0.2;
+    this.body.linearDamping = 0.05;
     this.body.angularDamping = 1.0;
     this.body.fixedRotation = true;
     world.addBody(this.body);
@@ -87,8 +87,9 @@ export class CatController {
     }
 
     const mouseDelta = this.input.consumeMouseDelta();
-    this.camYaw -= mouseDelta.x * 0.002;
-    this.camPitch -= mouseDelta.y * 0.002;
+    const lookSpeed = 0.002 * this.input.sensitivity;
+    this.camYaw -= mouseDelta.x * lookSpeed;
+    this.camPitch -= mouseDelta.y * lookSpeed;
     this.camPitch = clamp(this.camPitch, -1.3, 0.3);
     this.camDist = clamp(this.camDist + this.input.consumeWheelDelta(), 3, 12);
 
@@ -97,9 +98,9 @@ export class CatController {
     const right = this.input.right - this.input.left;
     const moving = Math.abs(forward) + Math.abs(right) > 0;
 
-    const speedBase = 3.5;
-    const speedRun = 7.0;
-    const speedSneak = 1.5;
+    const speedBase = 5.0;
+    const speedRun = 9.0;
+    const speedSneak = 2.0;
     const speed = this.input.sneak
       ? speedSneak
       : this.input.run
@@ -167,7 +168,8 @@ export class CatController {
     if (moving) {
       const yaw = this.camYaw;
       const forwardDir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-      const rightDir = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+      // Invert right vector so A/D match camera view intuitively
+      const rightDir = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
       dir
         .copy(forwardDir)
         .multiplyScalar(forward)
@@ -178,10 +180,10 @@ export class CatController {
         this.body.velocity.y,
         dir.z * speed
       );
-      // Lerp horizontal velocity
+      // Accelerate toward desired horizontal velocity
       const v = this.body.velocity;
-      v.x += (desiredVel.x - v.x) * 0.15;
-      v.z += (desiredVel.z - v.z) * 0.15;
+      v.x += (desiredVel.x - v.x) * 0.35;
+      v.z += (desiredVel.z - v.z) * 0.35;
     } else {
       // slow down when no input
       this.body.velocity.x *= 0.9;
@@ -210,9 +212,9 @@ export class CatController {
       this.body.position.z
     );
     const camOffset = new THREE.Vector3(
-      Math.sin(this.camYaw) * this.camDist,
+      -Math.sin(this.camYaw) * this.camDist,
       0,
-      Math.cos(this.camYaw) * this.camDist
+      -Math.cos(this.camYaw) * this.camDist
     );
     let camPos = camTarget
       .clone()
