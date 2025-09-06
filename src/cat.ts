@@ -12,9 +12,10 @@ export class CatController {
   onGround = false;
   camYaw = 0;
   camPitch = -0.3;
-  camDist = 6;
+  camDist = 4.5;
   targetMouse: THREE.Object3D | null = null;
   pounceCooldown = 0;
+  private _raycaster = new THREE.Raycaster();
 
   constructor(
     public world: CANNON.World,
@@ -70,7 +71,7 @@ export class CatController {
     scene.add(this.mesh);
   }
 
-  update(dt: number, camera: THREE.PerspectiveCamera, mice: THREE.Object3D[]) {
+  update(dt: number, camera: THREE.PerspectiveCamera, mice: THREE.Object3D[], colliders: THREE.Object3D[] = []) {
     this.onGround = false;
     // Grounded check via cannon-es narrowphase contact equations
     const world = this.body.world as any;
@@ -82,6 +83,22 @@ export class CatController {
         if (upY > 0.5) {
           this.onGround = true;
           break;
+        }
+      }
+    }
+    // Fallback: short downward raycast if no contact equations detected
+    if (!this.onGround) {
+      const Ray: any = (CANNON as any).Ray;
+      const RaycastResult: any = (CANNON as any).RaycastResult;
+      if (Ray && RaycastResult) {
+        const ray = new Ray();
+        const result = new RaycastResult();
+        ray.from.set(this.body.position.x, this.body.position.y, this.body.position.z);
+        ray.to.set(this.body.position.x, this.body.position.y - 0.7, this.body.position.z);
+        ray.intersectWorld(this.body.world, { mode: Ray.ANY, result, skipBackfaces: true });
+        if (result.hasHit && result.body !== this.body) {
+          const gap = this.body.position.y - result.hitPointWorld.y;
+          if (gap <= 0.75) this.onGround = true;
         }
       }
     }
@@ -98,8 +115,8 @@ export class CatController {
     const right = this.input.right - this.input.left;
     const moving = Math.abs(forward) + Math.abs(right) > 0;
 
-    const speedBase = 5.0;
-    const speedRun = 9.0;
+    const speedBase = 10.0;
+    const speedRun = 13.5;
     const speedSneak = 2.0;
     const speed = this.input.sneak
       ? speedSneak
@@ -109,8 +126,7 @@ export class CatController {
 
     if (this.onGround) {
       if (this.input.jump) {
-        // Jump or mantle; we just apply upward impulse
-        this.body.velocity.y = 5.5;
+        this.body.velocity.y = 7; // Jump strength
         this.state = "Jump";
       } else if (moving) {
         this.state = this.input.sneak
@@ -166,6 +182,8 @@ export class CatController {
     // Apply movement forces (project onto ground plane)
     const dir = new THREE.Vector3();
     if (moving) {
+      // ensure body is awake when moving
+      (this.body as any).wakeUp && (this.body as any).wakeUp();
       const yaw = this.camYaw;
       const forwardDir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
       // Invert right vector so A/D match camera view intuitively
@@ -220,6 +238,24 @@ export class CatController {
       .clone()
       .add(new THREE.Vector3(0, 2.5 + this.camPitch * -2, 0))
       .add(camOffset);
+    // Camera pushback: pull camera inwards if obstructed
+    const desired = camPos.clone();
+    const toCam = new THREE.Vector3().subVectors(desired, camTarget);
+    const dist = toCam.length();
+    if (dist > 0.001 && colliders && colliders.length > 0) {
+      const dir = toCam.normalize();
+      this._raycaster.set(camTarget, dir);
+      this._raycaster.far = dist;
+      const hits = this._raycaster
+        .intersectObjects(colliders, true)
+        .filter(h => h.object !== this.mesh);
+      if (hits.length > 0) {
+        const margin = 0.25;
+        const hit = hits[0];
+        const hitDist = Math.max(0.0, hit.distance - margin);
+        camPos.copy(camTarget).add(dir.multiplyScalar(hitDist));
+      }
+    }
     camera.position.lerp(camPos, 0.15);
     camera.lookAt(camTarget);
   }

@@ -22,7 +22,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   1000
 );
-camera.position.set(0, 3, 6);
+camera.position.set(0, 2.8, 4.2);
 
 // Lights
 const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.6);
@@ -152,7 +152,9 @@ function loop() {
   cat.update(
     dt,
     camera,
-    mice.filter((m) => m.alive).map((m) => m.mesh)
+    mice.filter((m) => m.alive).map((m) => m.mesh),
+    // Colliders for camera pushback: all static/dynamic meshes we added to the scene
+    level.meshes
   );
 
   const catPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);

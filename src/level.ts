@@ -76,14 +76,14 @@ export class Level {
       const box = remaining.pop()!;
       const size = new THREE.Vector3().subVectors(box.max, box.min);
       if (size.x > size.z) {
-        // split along X
+        // split along X (no gap so rooms touch; walls we add will define thickness)
         const mid = box.min.x + size.x * randRange(0.35, 0.65);
         const left = new THREE.Box3(
           box.min.clone(),
-          new THREE.Vector3(mid - 0.2, box.max.y, box.max.z)
+          new THREE.Vector3(mid, box.max.y, box.max.z)
         );
         const right = new THREE.Box3(
-          new THREE.Vector3(mid + 0.2, box.min.y, box.min.z),
+          new THREE.Vector3(mid, box.min.y, box.min.z),
           box.max.clone()
         );
         remaining.push(left, right);
@@ -92,10 +92,10 @@ export class Level {
         const mid = box.min.z + size.z * randRange(0.35, 0.65);
         const near = new THREE.Box3(
           box.min.clone(),
-          new THREE.Vector3(box.max.x, box.max.y, mid - 0.2)
+          new THREE.Vector3(box.max.x, box.max.y, mid)
         );
         const far = new THREE.Box3(
-          new THREE.Vector3(box.min.x, box.min.y, mid + 0.2),
+          new THREE.Vector3(box.min.x, box.min.y, mid),
           box.max.clone()
         );
         remaining.push(near, far);
@@ -105,7 +105,7 @@ export class Level {
     this.roomBoxes = rooms;
 
     // Build walls around house perimeter and between rooms, with random doorways
-    const wallHeight = 2.5;
+    const wallHeight = 7.5;
     const wallThickness = 0.2;
     const wallMat = new THREE.MeshStandardMaterial({
       color: 0xdedede,
@@ -137,7 +137,7 @@ export class Level {
       this.bodies.push(body);
     };
 
-    // Helper to draw box edges as walls but leave one random door opening per adjacency
+    // Helper to draw box edges as walls but leave one door opening per adjacency
     const drawRoomWalls = (box: THREE.Box3, openings: THREE.Vector3[]) => {
       const min = box.min,
         max = box.max;
@@ -159,7 +159,7 @@ export class Level {
         const edgeDir = new THREE.Vector3().subVectors(b, a);
         const len = edgeDir.length();
         const dir = edgeDir.clone().normalize();
-        const tol = 0.15; // perpendicular tolerance to consider on-edge
+        const tol = 0.3; // perpendicular tolerance to consider on-edge
         let chosenCenter: THREE.Vector3 | null = null;
         for (const o of openings) {
           const ap = new THREE.Vector3().subVectors(o, a);
@@ -174,7 +174,7 @@ export class Level {
         }
         if (chosenCenter) {
           // split wall into two segments around a door
-          const doorHalf = 0.6; // ~1.2m wide doorway
+          const doorHalf = 1.2; // 2x wider (~2.4m)
           const leftEnd = chosenCenter.clone().addScaledVector(dir, -doorHalf);
           const rightStart = chosenCenter.clone().addScaledVector(dir, doorHalf);
           // Clamp to segment
@@ -185,60 +185,97 @@ export class Level {
           );
           addWall(a, clampPoint(leftEnd), wallHeight);
           addWall(clampPoint(rightStart), b, wallHeight);
+
+          // Lintel over doorway: fill top 1/3 of wall height above the opening
+          const doorWidth = doorHalf * 2;
+          const lintelHeight = wallHeight / 3;
+          const openingHeight = wallHeight - lintelHeight; // ~2/3 of wall height for opening
+          const angle = Math.atan2(dir.x, dir.z);
+          const lintelGeo = new THREE.BoxGeometry(wallThickness, lintelHeight, doorWidth);
+          const lintelMesh = new THREE.Mesh(lintelGeo, wallMat);
+          lintelMesh.position.copy(chosenCenter);
+          lintelMesh.position.y = openingHeight + lintelHeight / 2;
+          lintelMesh.rotation.y = angle;
+          lintelMesh.castShadow = true;
+          lintelMesh.receiveShadow = true;
+          this.scene.add(lintelMesh);
+          this.meshes.push(lintelMesh);
+
+          const lintelShape = new CANNON.Box(
+            new CANNON.Vec3(wallThickness / 2, lintelHeight / 2, doorWidth / 2)
+          );
+          const lintelBody = new CANNON.Body({ mass: 0, shape: lintelShape });
+          lintelBody.position.set(
+            lintelMesh.position.x,
+            lintelMesh.position.y,
+            lintelMesh.position.z
+          );
+          lintelBody.quaternion.setFromEuler(0, angle, 0);
+          this.world.addBody(lintelBody);
+          this.bodies.push(lintelBody);
         } else {
           addWall(a, b, wallHeight);
         }
       }
     };
 
-    // compute adjacency between rooms and make random openings
+    // Compute adjacency once and assign a doorway to each touching pair
+    const roomOpenings: THREE.Vector3[][] = rooms.map(() => [])
+    const eps = 1e-3
     for (let i = 0; i < rooms.length; i++) {
-      const box = rooms[i];
-      const openings: THREE.Vector3[] = [];
-      for (let j = 0; j < rooms.length; j++) {
-        if (i === j) continue;
-        const other = rooms[j];
-        // If they touch along an edge
-        const overlapX =
-          Math.min(box.max.x, other.max.x) - Math.max(box.min.x, other.min.x);
-        const overlapZ =
-          Math.min(box.max.z, other.max.z) - Math.max(box.min.z, other.min.z);
-        const touchX =
-          overlapX > 0 &&
-          (Math.abs(box.max.z - other.min.z) < 0.05 ||
-            Math.abs(box.min.z - other.max.z) < 0.05);
-        const touchZ =
-          overlapZ > 0 &&
-          (Math.abs(box.max.x - other.min.x) < 0.05 ||
-            Math.abs(box.min.x - other.max.x) < 0.05);
-        if (touchX || touchZ) {
-          // place doorway center within overlapping span
-          if (touchX) {
-            const z =
-              (Math.max(box.min.z, other.min.z) +
-                Math.min(box.max.z, other.max.z)) /
-              2;
-            const x =
-              Math.abs(box.max.x - other.min.x) < 0.1 ? box.max.x : box.min.x;
-            openings.push(new THREE.Vector3(x, 0, z));
-          } else if (touchZ) {
-            const x =
-              (Math.max(box.min.x, other.min.x) +
-                Math.min(box.max.x, other.max.x)) /
-              2;
-            const z =
-              Math.abs(box.max.z - other.min.z) < 0.1 ? box.max.z : box.min.z;
-            openings.push(new THREE.Vector3(x, 0, z));
+      for (let j = i + 1; j < rooms.length; j++) {
+        const A = rooms[i], B = rooms[j]
+        // vertical shared wall (x constant), overlap along z
+        const overlapZ = Math.min(A.max.z, B.max.z) - Math.max(A.min.z, B.min.z)
+        if (overlapZ > 0) {
+          if (Math.abs(A.max.x - B.min.x) < eps) {
+            const z = (Math.max(A.min.z, B.min.z) + Math.min(A.max.z, B.max.z)) / 2
+            const x = A.max.x
+            const p = new THREE.Vector3(x, 0, z)
+            roomOpenings[i].push(p)
+            roomOpenings[j].push(p)
+            continue
+          }
+          if (Math.abs(A.min.x - B.max.x) < eps) {
+            const z = (Math.max(A.min.z, B.min.z) + Math.min(A.max.z, B.max.z)) / 2
+            const x = A.min.x
+            const p = new THREE.Vector3(x, 0, z)
+            roomOpenings[i].push(p)
+            roomOpenings[j].push(p)
+            continue
+          }
+        }
+        // horizontal shared wall (z constant), overlap along x
+        const overlapX = Math.min(A.max.x, B.max.x) - Math.max(A.min.x, B.min.x)
+        if (overlapX > 0) {
+          if (Math.abs(A.max.z - B.min.z) < eps) {
+            const x = (Math.max(A.min.x, B.min.x) + Math.min(A.max.x, B.max.x)) / 2
+            const z = A.max.z
+            const p = new THREE.Vector3(x, 0, z)
+            roomOpenings[i].push(p)
+            roomOpenings[j].push(p)
+            continue
+          }
+          if (Math.abs(A.min.z - B.max.z) < eps) {
+            const x = (Math.max(A.min.x, B.min.x) + Math.min(A.max.x, B.max.x)) / 2
+            const z = A.min.z
+            const p = new THREE.Vector3(x, 0, z)
+            roomOpenings[i].push(p)
+            roomOpenings[j].push(p)
+            continue
           }
         }
       }
-      // Add backyard opening from one random room at the back (positive z side)
-      if (Math.random() < 0.5 && Math.abs(box.max.z - 10) < 0.2) {
-        openings.push(
-          new THREE.Vector3((box.min.x + box.max.x) / 2, 0, box.max.z)
-        );
-      }
-      drawRoomWalls(box, openings);
+    }
+    // Optional backyard opening from a back room
+    const backIdx = rooms.findIndex(r => Math.abs(r.max.z - 10) < eps)
+    if (backIdx >= 0) {
+      const r = rooms[backIdx]
+      roomOpenings[backIdx].push(new THREE.Vector3((r.min.x + r.max.x)/2, 0, r.max.z))
+    }
+    // Draw all rooms with their assigned openings
+    for (let i = 0; i < rooms.length; i++) {
+      drawRoomWalls(rooms[i], roomOpenings[i])
     }
 
     // Backyard fence
@@ -266,10 +303,7 @@ export class Level {
       this.world.addBody(body);
       this.bodies.push(body);
     };
-    fence(
-      new THREE.Vector3(yardMin.x, 0, yardMin.z),
-      new THREE.Vector3(yardMax.x, 0, yardMin.z)
-    );
+    // No fence along the side that touches the house (south edge)
     fence(
       new THREE.Vector3(yardMax.x, 0, yardMin.z),
       new THREE.Vector3(yardMax.x, 0, yardMax.z)
@@ -283,8 +317,9 @@ export class Level {
       new THREE.Vector3(yardMin.x, 0, yardMin.z)
     );
 
-    // Hard floors for rooms and yard
+    // Hard floors and ceilings for rooms, plus yard
     const floorMat = new THREE.MeshStandardMaterial({ color: 0xcfcfcf });
+    const ceilMat = new THREE.MeshStandardMaterial({ color: 0xe6e6e6 });
     for (const r of rooms) {
       const size = new THREE.Vector3().subVectors(r.max, r.min);
       const mesh = new THREE.Mesh(
@@ -303,6 +338,15 @@ export class Level {
       body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
       this.world.addBody(body);
       this.bodies.push(body);
+
+      // ceiling
+      const ceil = new THREE.Mesh(new THREE.BoxGeometry(size.x, 0.1, size.z), ceilMat)
+      ceil.position.set((r.min.x + r.max.x)/2, wallHeight - 0.05, (r.min.z + r.max.z)/2)
+      ceil.receiveShadow = false; ceil.castShadow = false
+      this.scene.add(ceil); this.meshes.push(ceil)
+      const ceilBody = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(size.x/2, 0.05, size.z/2)) })
+      ceilBody.position.set(ceil.position.x, ceil.position.y, ceil.position.z)
+      this.world.addBody(ceilBody); this.bodies.push(ceilBody)
 
       // spawn points inside room
       for (let i = 0; i < 5; i++) {
@@ -375,72 +419,309 @@ export class Level {
       return mesh;
     };
 
-    for (const r of rooms) {
-      const cx = (r.min.x + r.max.x) / 2,
-        cz = (r.min.z + r.max.z) / 2;
-      // Counter
-      if (Math.random() < 0.8) {
-        placeBox(
-          new THREE.Vector3(cx, 0.9, cz),
-          new THREE.Vector3(randRange(2.5, 3.5), 0.9, randRange(1.0, 1.6)),
-          choice(furnMats)
-        );
+    // Procedural couch model built from simple primitives
+    const makeCouch = (length: number, depth = 0.9, height = 0.8) => {
+      const group = new THREE.Group();
+      const fabric = new THREE.MeshStandardMaterial({ color: 0x6b7a8f, roughness: 0.9 });
+      const fabric2 = new THREE.MeshStandardMaterial({ color: 0x5c6a7a, roughness: 0.9 });
+      const wood = new THREE.MeshStandardMaterial({ color: 0x775533, roughness: 0.7, metalness: 0.0 });
+
+      const seatH = 0.4;
+      const backH = height - seatH;
+      const armW = Math.min(0.18, Math.max(0.12, length * 0.08));
+      const legH = 0.1;
+
+      // Base frame (thin wood under seat)
+      const base = new THREE.Mesh(new THREE.BoxGeometry(length, 0.08, depth), wood);
+      base.position.set(0, 0.08/2 + legH, 0);
+      base.castShadow = base.receiveShadow = true; group.add(base);
+
+      // Seat cushion (slightly rounded via segments)
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(length - armW*2, seatH, depth - 0.06, 2, 1, 2), fabric);
+      seat.position.set(0, legH + 0.08 + seatH/2, 0);
+      seat.castShadow = seat.receiveShadow = true; group.add(seat);
+
+      // Backrest
+      const back = new THREE.Mesh(new THREE.BoxGeometry(length - armW*2, backH, 0.12), fabric2);
+      back.position.set(0, legH + 0.08 + seatH + backH/2, -(depth/2) + 0.06);
+      back.castShadow = back.receiveShadow = true; group.add(back);
+
+      // Armrests
+      const armL = new THREE.Mesh(new THREE.BoxGeometry(armW, height, depth), fabric2);
+      armL.position.set(-(length/2) + armW/2, legH + height/2, 0);
+      const armR = armL.clone(); armR.position.x = (length/2) - armW/2;
+      group.add(armL, armR);
+
+      // Seat cushions detail (two or three depending on length)
+      const cushionCount = length > 2.4 ? 3 : 2;
+      for (let i = 0; i < cushionCount; i++) {
+        const w = (length - armW*2 - 0.06 * (cushionCount + 1)) / cushionCount;
+        const c = new THREE.Mesh(new THREE.BoxGeometry(w, seatH*0.95, depth - 0.08, 2, 1, 2), fabric);
+        c.position.set(- (length/2 - armW) + 0.06 + w/2 + i * (w + 0.06), legH + 0.08 + seatH/2 + 0.01, 0.01);
+        c.castShadow = c.receiveShadow = true; group.add(c);
       }
-      // Table
-      if (Math.random() < 0.6) {
-        placeBox(
-          new THREE.Vector3(
-            cx + randRange(-1.5, 1.5),
-            0.75,
-            cz + randRange(-1.5, 1.5)
-          ),
-          new THREE.Vector3(1.2, 0.6, 1.2),
-          choice(furnMats)
-        );
+
+      // Legs
+      const legGeo = new THREE.CylinderGeometry(0.035, 0.035, legH, 8);
+      const leg1 = new THREE.Mesh(legGeo, wood);
+      const leg2 = leg1.clone(); const leg3 = leg1.clone(); const leg4 = leg1.clone();
+      leg1.position.set(-length/2 + 0.08, legH/2, -depth/2 + 0.08);
+      leg2.position.set(length/2 - 0.08, legH/2, -depth/2 + 0.08);
+      leg3.position.set(-length/2 + 0.08, legH/2, depth/2 - 0.08);
+      leg4.position.set(length/2 - 0.08, legH/2, depth/2 - 0.08);
+      group.add(leg1, leg2, leg3, leg4);
+
+      return group;
+    };
+
+    // Helpers to keep couches clear of doorways
+    const wouldBlockDoor = (room: THREE.Box3, openings: THREE.Vector3[], wall: number, center: number, halfLen: number) => {
+      // Disallow centers too close to door center along the wall axis
+      const eps = 0.15;
+      const doorHalf = 1.2; // keep in sync with door carving
+      const extra = 0.6;    // additional clearance
+      for (const o of openings) {
+        if (wall === 0 && Math.abs(o.z - room.max.z) < eps) { if (Math.abs(center - o.x) < halfLen + doorHalf + extra) return true }
+        if (wall === 1 && Math.abs(o.z - room.min.z) < eps) { if (Math.abs(center - o.x) < halfLen + doorHalf + extra) return true }
+        if (wall === 2 && Math.abs(o.x - room.max.x) < eps) { if (Math.abs(center - o.z) < halfLen + doorHalf + extra) return true }
+        if (wall === 3 && Math.abs(o.x - room.min.x) < eps) { if (Math.abs(center - o.z) < halfLen + doorHalf + extra) return true }
       }
-      // Couch
-      if (Math.random() < 0.5) {
-        placeBox(
-          new THREE.Vector3(cx + randRange(-2, 2), 0.6, cz + randRange(-2, 2)),
-          new THREE.Vector3(2.0, 0.8, 0.8),
-          choice(furnMats)
-        );
+      return false;
+    }
+    const boxIntersects = (minA: THREE.Vector2, maxA: THREE.Vector2, minB: THREE.Vector2, maxB: THREE.Vector2) => {
+      return !(maxA.x < minB.x || minA.x > maxB.x || maxA.y < minB.y || minA.y > maxB.y)
+    }
+    const wouldBlockDoorCorridor = (room: THREE.Box3, openings: THREE.Vector3[], couchX: number, couchZ: number, yaw: number, len: number, dep: number) => {
+      // couch axis-aligned at yaw multiples of 90deg
+      const halfX = (Math.abs(Math.sin(yaw)) > 0.5) ? dep/2 : len/2
+      const halfZ = (Math.abs(Math.sin(yaw)) > 0.5) ? len/2 : dep/2
+      const cMin = new THREE.Vector2(couchX - halfX, couchZ - halfZ)
+      const cMax = new THREE.Vector2(couchX + halfX, couchZ + halfZ)
+      const eps = 1e-3
+      const doorHalf = 1.2, depthClear = 1.0, widthExtra = 0.6
+      for (const o of openings) {
+        // North corridor
+        if (Math.abs(o.z - room.max.z) < eps) {
+          const min = new THREE.Vector2(o.x - (doorHalf + widthExtra), room.max.z - depthClear)
+          const max = new THREE.Vector2(o.x + (doorHalf + widthExtra), room.max.z)
+          if (boxIntersects(cMin, cMax, min, max)) return true
+        }
+        // South
+        if (Math.abs(o.z - room.min.z) < eps) {
+          const min = new THREE.Vector2(o.x - (doorHalf + widthExtra), room.min.z)
+          const max = new THREE.Vector2(o.x + (doorHalf + widthExtra), room.min.z + depthClear)
+          if (boxIntersects(cMin, cMax, min, max)) return true
+        }
+        // East
+        if (Math.abs(o.x - room.max.x) < eps) {
+          const min = new THREE.Vector2(room.max.x - depthClear, o.z - (doorHalf + widthExtra))
+          const max = new THREE.Vector2(room.max.x,           o.z + (doorHalf + widthExtra))
+          if (boxIntersects(cMin, cMax, min, max)) return true
+        }
+        // West
+        if (Math.abs(o.x - room.min.x) < eps) {
+          const min = new THREE.Vector2(room.min.x,           o.z - (doorHalf + widthExtra))
+          const max = new THREE.Vector2(room.min.x + depthClear, o.z + (doorHalf + widthExtra))
+          if (boxIntersects(cMin, cMax, min, max)) return true
+        }
       }
+      return false
     }
 
-    // Clutter: dynamic physics objects on top of furniture
-    const furnitureSurfaces = this.meshes.filter(
-      (m) =>
-        m instanceof THREE.Mesh &&
-        (m as THREE.Mesh).geometry instanceof THREE.BoxGeometry &&
-        m.position.y > 0.5
-    );
+    const placeCouchAlongWall = (room: THREE.Box3, openings: THREE.Vector3[]): number => {
+      // 1.5x larger couch
+      const scale = 1.5;
+      // Bigger rooms tend to get bigger couches
+      const roomSize = new THREE.Vector3().subVectors(room.max, room.min)
+      const longSpan = Math.max(roomSize.x, roomSize.z)
+      const sizeFactor = THREE.MathUtils.clamp((longSpan - 4) / 8, 0, 1) // span 4..12 -> 0..1
+      const length = (randRange(1.6, 3.2) + sizeFactor * randRange(0.4, 1.0)) * scale;
+      const depth = (randRange(0.8, 1.0) + sizeFactor * randRange(0.0, 0.2)) * scale;
+      const height = 0.8 * scale;
+      const couch = makeCouch(length, depth, height);
+      couch.traverse(o => { (o as any).castShadow = true; (o as any).receiveShadow = true; });
+
+      // choose a wall: 0=N(max z),1=S(min z),2=E(max x),3=W(min x)
+      const wall = Math.floor(Math.random()*4);
+      const gap = 0.06;
+      let x = 0, z = 0, yaw = 0;
+      let tries = 12;
+      let foundPos = false;
+      while (tries-- > 0) {
+        if (wall === 0) { // North: face away from wall (into room), back toward +Z => yaw = Math.PI
+          z = room.max.z - (depth/2 + gap);
+          const minX = room.min.x + 0.6 + length/2;
+          const maxX = room.max.x - 0.6 - length/2;
+          x = randRange(minX, Math.max(minX, maxX));
+          yaw = Math.PI;
+          if (!wouldBlockDoor(room, openings, wall, x, length/2)) { foundPos = true; break; }
+        } else if (wall === 1) { // South: back toward -Z => yaw = 0
+          z = room.min.z + (depth/2 + gap);
+          const minX = room.min.x + 0.6 + length/2;
+          const maxX = room.max.x - 0.6 - length/2;
+          x = randRange(minX, Math.max(minX, maxX));
+          yaw = 0;
+          if (!wouldBlockDoor(room, openings, wall, x, length/2)) { foundPos = true; break; }
+        } else if (wall === 2) { // East: back toward +X => yaw = -PI/2
+          x = room.max.x - (depth/2 + gap);
+          const minZ = room.min.z + 0.6 + length/2;
+          const maxZ = room.max.z - 0.6 - length/2;
+          z = randRange(minZ, Math.max(minZ, maxZ));
+          yaw = -Math.PI/2;
+          if (!wouldBlockDoor(room, openings, wall, z, length/2)) { foundPos = true; break; }
+        } else { // West: back toward -X => yaw = +PI/2
+          x = room.min.x + (depth/2 + gap);
+          const minZ = room.min.z + 0.6 + length/2;
+          const maxZ = room.max.z - 0.6 - length/2;
+          z = randRange(minZ, Math.max(minZ, maxZ));
+          yaw = Math.PI/2;
+          if (!wouldBlockDoor(room, openings, wall, z, length/2)) { foundPos = true; break; }
+      }
+      if (!foundPos) return 0;
+      }
+
+      couch.position.set(x, 0, z);
+      couch.rotation.y = yaw;
+      // doorway corridor check for main couch
+      if (wouldBlockDoorCorridor(room, openings, x, z, yaw, length, depth)) return 0;
+      this.scene.add(couch); this.meshes.push(couch);
+
+      // Physics proxy box for couch
+      const physLen = length;
+      const physDepth = depth;
+      const physHeight = height;
+      const shape = new CANNON.Box(new CANNON.Vec3(physLen/2, physHeight/2, physDepth/2));
+      const body = new CANNON.Body({ mass: 0, shape });
+      body.position.set(x, physHeight/2, z);
+      if (couch.rotation.y !== 0) body.quaternion.setFromEuler(0, couch.rotation.y, 0);
+      this.world.addBody(body); this.bodies.push(body);
+      let placedCount = 1;
+
+      // Chance to add a perpendicular couch forming an L shape in larger rooms
+      if (longSpan > 6 && Math.random() < (0.5 + sizeFactor * 0.3)) {
+        const secondaryScale = 1.0 + sizeFactor * 0.5;
+        const len2 = (randRange(1.2, 2.4) * secondaryScale) * scale;
+        const dep2 = (randRange(0.75, 0.95) * secondaryScale) * scale;
+        const h2 = height;
+        const couch2 = makeCouch(len2, dep2, h2);
+        couch2.traverse(o => { (o as any).castShadow = true; (o as any).receiveShadow = true; });
+
+        // Compute local axes for main couch
+        const R = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)); // length axis
+        const F = new THREE.Vector3(Math.sin(yaw), 0,  Math.cos(yaw)); // forward (into room)
+        const innerCorner = (endSign: number) => x + 0; // placeholder
+        const cornerPos = (endSign: number) => new THREE.Vector3().copy(new THREE.Vector3(x,0,z)).add(R.clone().multiplyScalar(endSign * length/2)).add(F.clone().multiplyScalar(depth/2));
+        const gap = 0.06;
+
+        let placed = false;
+        for (const endSign of [1, -1]) {
+          const pCorner = cornerPos(endSign);
+          // Desired forward for the L leg: point toward inside of L (toward main couch center)
+          const Fdesired = R.clone().multiplyScalar(-endSign).normalize();
+          const candYaw = [yaw + Math.PI/2, yaw - Math.PI/2];
+          // Choose yaw2 so that its forward best matches Fdesired
+          let yaw2 = candYaw[0];
+          let bestDot = -1e9;
+          for (const y of candYaw) {
+            const Ftest = new THREE.Vector3(Math.sin(y), 0, Math.cos(y));
+            const d = Ftest.dot(Fdesired);
+            if (d > bestDot) { bestDot = d; yaw2 = y; }
+          }
+          const R2 = new THREE.Vector3(Math.cos(yaw2), 0, -Math.sin(yaw2));
+          const F2 = new THREE.Vector3(Math.sin(yaw2), 0,  Math.cos(yaw2));
+
+          // Try both choices of which length end of couch2 is the inner corner
+          for (const s of [1, -1]) {
+            const targetCorner = pCorner.clone().sub(F.clone().multiplyScalar(gap));
+            const c2 = targetCorner.clone()
+              .sub(R2.clone().multiplyScalar(s * len2/2 + gap))
+              .sub(F2.clone().multiplyScalar(dep2/2 + gap));
+
+            // Bounds and doorway corridor checks
+            if (c2.x - len2/2 < room.min.x + 0.5 || c2.x + len2/2 > room.max.x - 0.5) continue;
+            if (c2.z - dep2/2 < room.min.z + 0.5 || c2.z + dep2/2 > room.max.z - 0.5) continue;
+            if (wouldBlockDoorCorridor(room, openings, c2.x, c2.z, yaw2, len2, dep2)) continue;
+
+            couch2.position.set(c2.x, 0, c2.z); couch2.rotation.y = yaw2;
+            this.scene.add(couch2); this.meshes.push(couch2);
+            const shape2 = new CANNON.Box(new CANNON.Vec3((Math.abs(Math.sin(yaw2))>0.5?dep2:len2)/2, h2/2, (Math.abs(Math.sin(yaw2))>0.5?len2:dep2)/2));
+            const body2 = new CANNON.Body({ mass: 0, shape: shape2 });
+            body2.position.set(c2.x, h2/2, c2.z); if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
+            this.world.addBody(body2); this.bodies.push(body2);
+            placed = true; placedCount += 1; break;
+          }
+          if (placed) break;
+        }
+      }
+      return placedCount;
+    };
+
+    for (let ri = 0; ri < rooms.length; ri++) {
+      const r = rooms[ri];
+      const cx = (r.min.x + r.max.x) / 2,
+        cz = (r.min.z + r.max.z) / 2;
+      // Couches along walls (avoid doorways)
+      // Count total to enforce a minimum later
+      // First stochastic pass
+      // Accumulator defined after loop
+    }
+    // Ensure a minimum couches per house: randomly 1 or 2
+    const minCouches = Math.random() < 0.5 ? 1 : 2;
+    let totalCouches = 0;
+    for (let ri = 0; ri < rooms.length; ri++) {
+      if (Math.random() < 0.7) totalCouches += placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
+      if (Math.random() < 0.35) totalCouches += placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
+    }
+    let safety = 50;
+    while (totalCouches < minCouches && safety-- > 0) {
+      const idx = Math.floor(Math.random() * rooms.length);
+      totalCouches += placeCouchAlongWall(rooms[idx], roomOpenings[idx]);
+    }
+
+    // Clutter: dynamic physics objects randomly around rooms (not on furniture)
     for (let i = 0; i < spec.clutterCount; i++) {
-      const surf = choice(furnitureSurfaces) as THREE.Mesh;
-      if (!surf) break;
-      const size = new THREE.Vector3().fromArray(
-        (surf.geometry as THREE.BoxGeometry).parameters
-      ) as any;
-      const px = randRange(
-        surf.position.x - size.width / 2 + 0.1,
-        surf.position.x + size.width / 2 - 0.1
-      );
-      const pz = randRange(
-        surf.position.z - size.depth / 2 + 0.1,
-        surf.position.z + size.depth / 2 - 0.1
-      );
-      const p = new THREE.Vector3(
-        px,
-        surf.position.y + (surf as any).geometry.parameters.height / 2 + 0.1,
-        pz
-      );
-      const w = randRange(0.1, 0.3);
-      placeBox(
-        p,
-        new THREE.Vector3(w, w, w),
-        new THREE.MeshStandardMaterial({ color: 0xffffff * Math.random() }),
-        randRange(0.1, 0.6)
-      );
+      const r = choice(rooms);
+      const margin = 0.6;
+      const px = randRange(r.min.x + margin, r.max.x - margin);
+      const pz = randRange(r.min.z + margin, r.max.z - margin);
+      const baseY = 0.15; // spawn slightly above floor and let physics settle
+
+      // Heavier-looking but lighter weight: size x2–x3, mass at 25%
+      const massBase = randRange(0.12, 0.6) * 0.25;
+      const scale = randRange(2.0, 3.0);
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff * Math.random() });
+      if (Math.random() < 0.5) {
+        // Sphere clutter
+        const baseR = randRange(0.08, 0.18);
+        const rr = baseR * scale;
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(rr, 18, 14), mat);
+        mesh.position.set(px, baseY + rr + 0.02, pz);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.scene.add(mesh); this.meshes.push(mesh);
+        const body = new CANNON.Body({ mass: massBase, shape: new CANNON.Sphere(rr) });
+        body.angularDamping = 0.25; body.linearDamping = 0.02;
+        body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
+        this.world.addBody(body); this.bodies.push(body);
+      } else {
+        // Upright cylinder clutter
+        const baseR = randRange(0.06, 0.12);
+        const baseH = randRange(0.14, 0.3);
+        const rr = baseR * scale;
+        const h = baseH * scale;
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr, h, 16), mat);
+        mesh.position.set(px, baseY + h / 2 + 0.02, pz);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        this.scene.add(mesh); this.meshes.push(mesh);
+        const cyl = new (CANNON as any).Cylinder(rr, rr, h, 16);
+        const body = new CANNON.Body({ mass: massBase });
+        // Align cylinder axis to Y by rotating around Z
+        const q = new CANNON.Quaternion();
+        q.setFromEuler(0, 0, Math.PI / 2);
+        body.addShape(cyl, new CANNON.Vec3(0, 0, 0), q);
+        body.angularDamping = 0.25; body.linearDamping = 0.02;
+        body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
+        this.world.addBody(body); this.bodies.push(body);
+      }
     }
   }
 }
