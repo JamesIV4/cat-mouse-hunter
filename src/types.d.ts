@@ -1,2 +1,1 @@
-
-declare module 'cannon-es';
+declare module "cannon-es";
