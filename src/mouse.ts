@@ -20,8 +20,22 @@ export class Mouse {
   slowTimer = 0;
   turnCooldown = 0; // prevents rapid side switching
   forwardBlockTimer = 0; // hysteresis for forward blocked detection
-  speed = 13;
+  speed = 10;
   alive = true;
+  // Hole exit ignore timer: prevents immediate re-entry after exiting
+  private holeIgnoreTimer = 0;
+  private holes: {
+    position: THREE.Vector3;
+    inward: THREE.Vector3;
+    room: THREE.Box3;
+  }[];
+  // In-hole travel delay and destination scheduling
+  private inHoleTimer = 0;
+  private pendingExitHole: {
+    position: THREE.Vector3;
+    inward: THREE.Vector3;
+    room: THREE.Box3;
+  } | null = null;
   // Erratic steering when pursued
   private erraticTimer = 0;
   private erraticAngle = 0; // radians, applied around Y to steering dir
@@ -34,13 +48,20 @@ export class Mouse {
     public scene: THREE.Scene,
     pos: THREE.Vector3,
     public bounds: THREE.Box3,
+    holes: {
+      position: THREE.Vector3;
+      inward: THREE.Vector3;
+      room: THREE.Box3;
+    }[],
     public sfx?: Sound
   ) {
-    const shape = new CANNON.Sphere(0.12);
+    // Increase hitbox radius to reduce wall clipping (~2x)
+    const shape = new CANNON.Sphere(0.24);
     this.body = new CANNON.Body({
       mass: 0.3,
       shape,
-      position: new CANNON.Vec3(pos.x, 0.3, pos.z),
+      // Spawn slightly above floor; keep center above radius
+      position: new CANNON.Vec3(pos.x, 0.36, pos.z),
     });
     this.body.linearDamping = 0.2;
     world.addBody(this.body);
@@ -81,10 +102,27 @@ export class Mouse {
     // Initialize random heading
     const ang = randRange(0, Math.PI * 2);
     this.heading.set(Math.sin(ang), 0, Math.cos(ang));
+    // Store holes reference
+    this.holes = holes;
   }
 
   update(dt: number, catPos: THREE.Vector3) {
     if (!this.alive) return;
+    // If traveling through a hole, wait out the delay hidden, then pop out
+    if (this.inHoleTimer > 0) {
+      this.inHoleTimer = Math.max(0, this.inHoleTimer - dt);
+      // freeze motion while hidden
+      this.body.velocity.x = 0;
+      this.body.velocity.z = 0;
+      if (this.inHoleTimer === 0 && this.pendingExitHole) {
+        this.performHoleExit(this.pendingExitHole);
+        this.pendingExitHole = null;
+      } else {
+        return;
+      }
+    }
+    // Update hole ignore timer
+    this.holeIgnoreTimer = Math.max(0, this.holeIgnoreTimer - dt);
     this.wanderTimer -= dt;
     this.pathTimer -= dt;
     this.flipRetryTimer = Math.max(0, this.flipRetryTimer - dt);
@@ -186,6 +224,43 @@ export class Mouse {
       }
     }
 
+    // If near a mouse hole, bias direction to point to it instead of random jitters
+    if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
+      const seekRadius = 6; // increased radius to seek holes
+      const myPos = new THREE.Vector3(
+        this.body.position.x,
+        0.5,
+        this.body.position.z
+      );
+      let nearest: {
+        position: THREE.Vector3;
+        inward: THREE.Vector3;
+        room: THREE.Box3;
+      } | null = null;
+      let bestD = Infinity;
+      for (const h of this.holes) {
+        // Only consider holes whose room contains the mouse
+        if (!h.room.containsPoint(myPos)) continue;
+        const d = myPos.distanceTo(h.position);
+        if (d < bestD) {
+          bestD = d;
+          nearest = h;
+        }
+      }
+      if (nearest && bestD <= seekRadius) {
+        const aim = nearest.position
+          .clone()
+          .addScaledVector(nearest.inward, -0.1); // stop a tad in front of the hole
+        this.target = aim;
+        const flatPos = new THREE.Vector3(
+          this.body.position.x,
+          0,
+          this.body.position.z
+        );
+        dir.copy(aim).sub(flatPos).normalize();
+      }
+    }
+
     // Stuck resolution: if not reaching speed along dir, flip one axis and try a new waypoint
     const v = this.body.velocity;
     const along =
@@ -221,17 +296,46 @@ export class Mouse {
       }
     }
     // Speed multipliers: +50% overall, +50% more when pursued
-    let speedMul = 1.5; // global faster mice
-    if (pursued) speedMul *= 2; // additional boost when chased
+    let speedMul = 1.2; // global faster mice
+    if (pursued) speedMul *= 1.75; // additional boost when chased
     v.x += (dir.x * this.speed * speedMul - v.x) * 0.2;
     v.z += (dir.z * this.speed * speedMul - v.z) * 0.2;
+
+    // Enter mouse hole if within a slim horizontal gate in front of the hole
+    if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
+      const myPos = new THREE.Vector3(
+        this.body.position.x,
+        0,
+        this.body.position.z
+      );
+      let enteredFrom: {
+        position: THREE.Vector3;
+        inward: THREE.Vector3;
+        room: THREE.Box3;
+      } | null = null;
+      for (const h of this.holes) {
+        const inward = h.inward.clone().setY(0).normalize();
+        const tangent = new THREE.Vector3(-inward.z, 0, inward.x).normalize();
+        const delta = myPos.clone().sub(h.position);
+        const lateral = Math.abs(delta.x * tangent.x + delta.z * tangent.z);
+        const forward = delta.x * inward.x + delta.z * inward.z; // >0 means in front (inside room)
+        const halfWidth = 0.18; // narrow horizontally (approx hole half-width)
+        const maxDepth = 0.9; // allow up to 0.9m away in front
+        if (lateral <= halfWidth && forward >= 0 && forward <= maxDepth) {
+          enteredFrom = h;
+          break;
+        }
+      }
+      if (enteredFrom) this.teleportFromHole(enteredFrom);
+    }
 
     // keep within bounds
     const b = this.bounds;
     v.x += (pos.x < b.min.x + 0.5 ? 1 : 0) + (pos.x > b.max.x - 0.5 ? -1 : 0);
     v.z += (pos.z < b.min.z + 0.5 ? 1 : 0) + (pos.z > b.max.z - 0.5 ? -1 : 0);
 
-    this.mesh.position.set(this.body.position.x, 0.12, this.body.position.z);
+    // Match visual Y to hitbox radius so feet stay on ground
+    this.mesh.position.set(this.body.position.x, 0.24, this.body.position.z);
     // Orient the mouse to face its direction of travel
     const speedH = Math.hypot(v.x, v.z);
     if (speedH > 0.05) {
@@ -244,6 +348,84 @@ export class Mouse {
     }
     // Remember pursuit state for next frame
     this.wasPursued = pursued;
+  }
+
+  private teleportFromHole(from: {
+    position: THREE.Vector3;
+    inward: THREE.Vector3;
+    room: THREE.Box3;
+  }) {
+    // Choose a random destination hole (could be same if only one exists)
+    const pool = this.holes;
+    let dest = pool[Math.floor(Math.random() * pool.length)];
+    if (pool.length > 1) {
+      // try to avoid picking the same hole when possible
+      for (let i = 0; i < 4 && dest === from; i++)
+        dest = pool[Math.floor(Math.random() * pool.length)];
+    }
+    // Begin in-hole travel: hide, freeze, and schedule exit after 0.25s
+    this.inHoleTimer = 0.25;
+    this.pendingExitHole = dest;
+    this.mesh.visible = false;
+    this.body.velocity.x = 0;
+    this.body.velocity.z = 0;
+    return;
+    // Spawn a bit inside the room in front of the destination hole
+    const inward = dest.inward.clone().setY(0).normalize();
+    const offset = 0.6; // meters inside the room
+    const exitPos = dest.position.clone().addScaledVector(inward, offset);
+    // Apply position instantly to physics body
+    this.body.position.set(exitPos.x, 0.36, exitPos.z);
+    // Push the mouse into the room with a random heading within ±75° of inward
+    const deg = 75 * (Math.random() * 2 - 1);
+    const a = (deg * Math.PI) / 180;
+    const cos = Math.cos(a),
+      sin = Math.sin(a);
+    const d = new THREE.Vector3(
+      inward.x * cos + inward.z * sin,
+      0,
+      inward.z * cos - inward.x * sin
+    ).normalize();
+    const burst = this.speed * 1.5;
+    this.body.velocity.x = d.x * burst;
+    this.body.velocity.z = d.z * burst;
+    // Set a short-range target to sustain movement away from the hole
+    this.target = exitPos.clone().addScaledVector(d, 2.0 + Math.random());
+    this.pathTimer = 1.0;
+    // Prevent immediate re-entry
+    this.holeIgnoreTimer = 2.0;
+  }
+
+  private performHoleExit(dest: {
+    position: THREE.Vector3;
+    inward: THREE.Vector3;
+    room: THREE.Box3;
+  }) {
+    // Spawn a bit inside the room in front of the destination hole
+    const inward = dest.inward.clone().setY(0).normalize();
+    const offset = 0.6; // meters inside the room
+    const exitPos = dest.position.clone().addScaledVector(inward, offset);
+    // Move and re-show
+    this.body.position.set(exitPos.x, 0.36, exitPos.z);
+    this.mesh.visible = true;
+    // Push the mouse into the room with a random heading within ±75° of inward
+    const deg = 75 * (Math.random() * 2 - 1);
+    const a = (deg * Math.PI) / 180;
+    const cos = Math.cos(a),
+      sin = Math.sin(a);
+    const d = new THREE.Vector3(
+      inward.x * cos + inward.z * sin,
+      0,
+      inward.z * cos - inward.x * sin
+    ).normalize();
+    const burst = this.speed * 1.5;
+    this.body.velocity.x = d.x * burst;
+    this.body.velocity.z = d.z * burst;
+    // Set a short-range target to sustain movement away from the hole
+    this.target = exitPos.clone().addScaledVector(d, 2.0 + Math.random());
+    this.pathTimer = 1.0;
+    // Prevent immediate re-entry
+    this.holeIgnoreTimer = 2.0;
   }
 
   kill() {

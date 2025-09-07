@@ -129,7 +129,7 @@ function createLevel(n: number) {
     const p =
       level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)] ||
       new THREE.Vector3(0, 0, 0);
-    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), sfx);
+    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), level.mouseHoles, sfx);
     mouse.speed = spec.mouseSpeed;
     mice.push(mouse);
   }
@@ -162,6 +162,11 @@ function loop() {
 
   // update entities
   input.updateGamepad(dt);
+  // If the "Next level" banner is up and A was pressed to accept,
+  // suppress interpreting that A press as jump this frame.
+  if (bannerVisible && input.padAccept) {
+    input.suppressPadJumpOnce();
+  }
   level.update(dt);
   cat.update(
     dt,
@@ -178,7 +183,8 @@ function loop() {
   for (const m of mice) {
     if (!m.alive) continue;
     const d = m.mesh.position.distanceTo(cat.mesh.position);
-    if (d < 0.6) {
+    // Slightly larger catch radius to match bigger mouse collider
+    if (d < 0.7) {
       m.kill();
       sfx.mouseDie();
       caught++;

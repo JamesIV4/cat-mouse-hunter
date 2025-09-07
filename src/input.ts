@@ -14,6 +14,8 @@ export class Input {
   padRestart = false;
   padNext = false;
   padAccept = false; // A button edge
+  // Suppress gamepad A being treated as jump until A is released
+  private suppressPadJumpLatched = false;
 
   constructor(private dom: HTMLElement | Document = document) {
     this.bind();
@@ -113,7 +115,9 @@ export class Input {
     );
   }
   get jump() {
-    return !!this.keys["Space"] || this.isPadButton(0); // A
+    const space = !!this.keys["Space"];
+    const padA = this.isPadButton(0) && !this.suppressPadJumpLatched; // ignore A when suppressed
+    return space || padA;
   }
   get run() {
     const btn = this.getPadButtonValue(7) > 0.5 || this.isPadButton(5); // RT or RB
@@ -132,6 +136,7 @@ export class Input {
 
   // Poll gamepad and update inputs
   updateGamepad(dt: number = 0) {
+    // Jump suppression unlatches on A release; no per-frame reset
     const pads = (navigator as any).getGamepads ? (navigator as any).getGamepads() as (Gamepad | null)[] : [];
     let gp: Gamepad | null = null;
     if (this.gpIndex >= 0) gp = pads[this.gpIndex] || null;
@@ -173,6 +178,10 @@ export class Input {
     this.padNext = this.justPressed(9);
     // Accept/Advance via A edge
     this.padAccept = this.justPressed(0);
+    // If A is currently up, clear any latched jump suppression
+    const aBtn = gp.buttons && gp.buttons[0];
+    const aDown = !!(typeof aBtn === 'object' ? (aBtn as any).pressed : aBtn);
+    if (this.suppressPadJumpLatched && !aDown) this.suppressPadJumpLatched = false;
 
     // Save prev buttons
     this.gpPrevButtons = (gp.buttons || []).map(b => (typeof b === 'object' ? (b as any).pressed : !!b));
@@ -208,5 +217,10 @@ export class Input {
     const v = this.padAccept;
     this.padAccept = false;
     return v;
+  }
+
+  // Prevent the current A press from being interpreted as jump until A is released
+  suppressPadJumpOnce() {
+    this.suppressPadJumpLatched = true;
   }
 }

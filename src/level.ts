@@ -20,6 +20,8 @@ export class Level {
   bodies: CANNON.Body[] = [];
   spawnPoints: THREE.Vector3[] = [];
   dynamicPairs: { mesh: THREE.Object3D; body: CANNON.Body }[] = [];
+  // Gameplay registry of mouse holes (position and inward normal)
+  mouseHoles: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }[] = [];
 
   constructor(
     public world: CANNON.World,
@@ -76,6 +78,7 @@ export class Level {
     this.bodies.length = 0;
     this.roomBoxes.length = 0;
     this.spawnPoints.length = 0;
+    this.mouseHoles.length = 0;
 
     // Generate a set of rectangular rooms connected in a loose grid, plus a backyard
     const H = Math.max(8, spec.houseHalfSize || 10);
@@ -89,21 +92,26 @@ export class Level {
     const minRoomSize = doorWidth + 0.6; // slightly larger than a door
     // Determine desired room count from density and house area
     const area = (houseMax.x - houseMin.x) * (houseMax.z - houseMin.z);
-    const density = (typeof spec.roomDensity === 'number' && spec.roomDensity! > 0)
-      ? spec.roomDensity!
-      : Math.max(0.002, spec.roomCount / Math.max(1, area));
+    const density =
+      typeof spec.roomDensity === "number" && spec.roomDensity! > 0
+        ? spec.roomDensity!
+        : Math.max(0.002, spec.roomCount / Math.max(1, area));
     const targetRooms = Math.max(1, Math.min(48, Math.floor(area * density)));
 
     // Greedy split largest rooms until target reached or no valid splits
     let guard = 0;
     while (remaining.length + rooms.length < targetRooms && guard++ < 500) {
       // pick the largest box to split
-      let idx = -1, bestA = -1;
+      let idx = -1,
+        bestA = -1;
       for (let i = 0; i < remaining.length; i++) {
         const b = remaining[i];
         const sz = new THREE.Vector3().subVectors(b.max, b.min);
         const a = sz.x * sz.z;
-        if (a > bestA) { bestA = a; idx = i; }
+        if (a > bestA) {
+          bestA = a;
+          idx = i;
+        }
       }
       if (idx < 0) break;
       const box = remaining.splice(idx, 1)[0];
@@ -112,30 +120,54 @@ export class Level {
       // Try multiple candidate splits
       let didSplit = false;
       for (let attempt = 0; attempt < 8 && !didSplit; attempt++) {
-        const alongX = (attempt < 4) ? splitAlongX : !splitAlongX;
+        const alongX = attempt < 4 ? splitAlongX : !splitAlongX;
         if (alongX) {
           const minCut = box.min.x + minRoomSize;
           const maxCut = box.max.x - minRoomSize;
           if (maxCut - minCut <= 0.5) continue;
           const mid = randRange(minCut, maxCut);
-          const left = new THREE.Box3(box.min.clone(), new THREE.Vector3(mid, box.max.y, box.max.z));
-          const right = new THREE.Box3(new THREE.Vector3(mid, box.min.y, box.min.z), box.max.clone());
+          const left = new THREE.Box3(
+            box.min.clone(),
+            new THREE.Vector3(mid, box.max.y, box.max.z)
+          );
+          const right = new THREE.Box3(
+            new THREE.Vector3(mid, box.min.y, box.min.z),
+            box.max.clone()
+          );
           const lsz = new THREE.Vector3().subVectors(left.max, left.min);
           const rsz = new THREE.Vector3().subVectors(right.max, right.min);
-          if (lsz.x >= minRoomSize && lsz.z >= minRoomSize && rsz.x >= minRoomSize && rsz.z >= minRoomSize) {
-            remaining.push(left, right); didSplit = true;
+          if (
+            lsz.x >= minRoomSize &&
+            lsz.z >= minRoomSize &&
+            rsz.x >= minRoomSize &&
+            rsz.z >= minRoomSize
+          ) {
+            remaining.push(left, right);
+            didSplit = true;
           }
         } else {
           const minCut = box.min.z + minRoomSize;
           const maxCut = box.max.z - minRoomSize;
           if (maxCut - minCut <= 0.5) continue;
           const mid = randRange(minCut, maxCut);
-          const near = new THREE.Box3(box.min.clone(), new THREE.Vector3(box.max.x, box.max.y, mid));
-          const far = new THREE.Box3(new THREE.Vector3(box.min.x, box.min.y, mid), box.max.clone());
+          const near = new THREE.Box3(
+            box.min.clone(),
+            new THREE.Vector3(box.max.x, box.max.y, mid)
+          );
+          const far = new THREE.Box3(
+            new THREE.Vector3(box.min.x, box.min.y, mid),
+            box.max.clone()
+          );
           const nsz = new THREE.Vector3().subVectors(near.max, near.min);
           const fsz = new THREE.Vector3().subVectors(far.max, far.min);
-          if (nsz.x >= minRoomSize && nsz.z >= minRoomSize && fsz.x >= minRoomSize && fsz.z >= minRoomSize) {
-            remaining.push(near, far); didSplit = true;
+          if (
+            nsz.x >= minRoomSize &&
+            nsz.z >= minRoomSize &&
+            fsz.x >= minRoomSize &&
+            fsz.z >= minRoomSize
+          ) {
+            remaining.push(near, far);
+            didSplit = true;
           }
         }
       }
@@ -227,16 +259,28 @@ export class Level {
     // Add a single baseboard on the interior side (used for exterior perimeter walls)
     const addBaseboardInner = (p1: THREE.Vector3, p2: THREE.Vector3) => {
       const dir = new THREE.Vector3().subVectors(p2, p1);
-      const len = dir.length(); if (len < 0.05) return;
+      const len = dir.length();
+      if (len < 0.05) return;
       const angle = Math.atan2(dir.x, dir.z);
       const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
       const n = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
       const baseH = 0.24;
       const baseT = 0.06;
       const offset = wallThickness / 2 + baseT / 2;
-      const geo = new THREE.BoxGeometry(baseT, baseH, Math.max(0.01, len - 0.02));
-      const houseCenter = new THREE.Vector3((houseMin.x + houseMax.x)/2, 0, (houseMin.z + houseMax.z)/2);
-      const toCenter = new THREE.Vector3().subVectors(houseCenter, mid).setY(0).normalize();
+      const geo = new THREE.BoxGeometry(
+        baseT,
+        baseH,
+        Math.max(0.01, len - 0.02)
+      );
+      const houseCenter = new THREE.Vector3(
+        (houseMin.x + houseMax.x) / 2,
+        0,
+        (houseMin.z + houseMax.z) / 2
+      );
+      const toCenter = new THREE.Vector3()
+        .subVectors(houseCenter, mid)
+        .setY(0)
+        .normalize();
       const inwardIsN = n.dot(toCenter) > 0;
       const normal = inwardIsN ? n : n.clone().multiplyScalar(-1);
       const m = new THREE.Mesh(geo, baseboardMat);
@@ -244,8 +288,10 @@ export class Level {
       m.position.y = baseH / 2;
       m.position.add(normal.clone().multiplyScalar(offset));
       m.rotation.y = angle;
-      m.castShadow = false; m.receiveShadow = true;
-      this.scene.add(m); this.meshes.push(m);
+      m.castShadow = false;
+      m.receiveShadow = true;
+      this.scene.add(m);
+      this.meshes.push(m);
     };
 
     // Helper to draw box edges as walls but leave one door opening per adjacency
@@ -426,7 +472,9 @@ export class Level {
       }
     }
     // Optional backyard opening from a back room (north side of house)
-    const backIdx = rooms.findIndex((r) => Math.abs(r.max.z - houseMax.z) < eps);
+    const backIdx = rooms.findIndex(
+      (r) => Math.abs(r.max.z - houseMax.z) < eps
+    );
     if (backIdx >= 0) {
       const r = rooms[backIdx];
       roomOpenings[backIdx].push(
@@ -436,6 +484,302 @@ export class Level {
     // Draw all rooms with their assigned openings
     for (let i = 0; i < rooms.length; i++) {
       drawRoomWalls(rooms[i], roomOpenings[i]);
+    }
+
+    // Filter spawn points: avoid placing spawns inside doorway corridors
+    if (this.spawnPoints.length > 0) {
+      const doorHalf = 1.2; // keep in sync with doorway carving
+      const widthExtra = 0.4; // extra width clearance
+      const depthClear = 0.8; // inward clearance from the wall
+      const epsEdge = 1e-3;
+      const spawnOK = (p: THREE.Vector3) => {
+        // Find the room containing this point
+        let roomIdx = -1;
+        for (let i = 0; i < rooms.length; i++) {
+          const r = rooms[i];
+          if (
+            p.x >= r.min.x &&
+            p.x <= r.max.x &&
+            p.z >= r.min.z &&
+            p.z <= r.max.z
+          ) {
+            roomIdx = i;
+            break;
+          }
+        }
+        if (roomIdx < 0) return true;
+        const r = rooms[roomIdx];
+        const openings = roomOpenings[roomIdx];
+        for (const o of openings) {
+          // Check four wall sides for corridor rectangles
+          // North wall (z ~ r.max.z): corridor extends inward along -Z
+          if (Math.abs(o.z - r.max.z) < epsEdge) {
+            if (
+              p.z <= r.max.z &&
+              p.z >= r.max.z - depthClear &&
+              p.x >= o.x - (doorHalf + widthExtra) &&
+              p.x <= o.x + (doorHalf + widthExtra)
+            )
+              return false;
+          }
+          // South wall (z ~ r.min.z): corridor extends inward along +Z
+          if (Math.abs(o.z - r.min.z) < epsEdge) {
+            if (
+              p.z >= r.min.z &&
+              p.z <= r.min.z + depthClear &&
+              p.x >= o.x - (doorHalf + widthExtra) &&
+              p.x <= o.x + (doorHalf + widthExtra)
+            )
+              return false;
+          }
+          // East wall (x ~ r.max.x): corridor extends inward along -X
+          if (Math.abs(o.x - r.max.x) < epsEdge) {
+            if (
+              p.x <= r.max.x &&
+              p.x >= r.max.x - depthClear &&
+              p.z >= o.z - (doorHalf + widthExtra) &&
+              p.z <= o.z + (doorHalf + widthExtra)
+            )
+              return false;
+          }
+          // West wall (x ~ r.min.x): corridor extends inward along +X
+          if (Math.abs(o.x - r.min.x) < epsEdge) {
+            if (
+              p.x >= r.min.x &&
+              p.x <= r.min.x + depthClear &&
+              p.z >= o.z - (doorHalf + widthExtra) &&
+              p.z <= o.z + (doorHalf + widthExtra)
+            )
+              return false;
+          }
+        }
+        return true;
+      };
+      this.spawnPoints = this.spawnPoints.filter(spawnOK);
+    }
+
+    // Track couch footprints placed in this level to avoid intersections and ban hole placement behind couches later
+    const couchRects: { x: number; z: number; halfX: number; halfZ: number }[] = [];
+
+    // Mouse holes: small black arch shapes along interior walls/baseboards
+    const holeMat = new THREE.MeshStandardMaterial({
+      color: 0x000000,
+      roughness: 1.0,
+      metalness: 0.0,
+    });
+    const addMouseHoleOnEdge = (
+      room: THREE.Box3,
+      a: THREE.Vector3,
+      b: THREE.Vector3
+    ) => {
+      const dir = new THREE.Vector3().subVectors(b, a);
+      const len = dir.length();
+      if (len < 0.8) return; // too short
+      // pick a position along the edge, avoid corners
+      const t = 0.2 + Math.random() * 0.6;
+      const pos = a.clone().addScaledVector(dir, t);
+      const angle = Math.atan2(dir.x, dir.z);
+      const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      const n = new THREE.Vector3(dir.z, 0, -dir.x).normalize(); // outward normal (one side)
+      const roomCenter = new THREE.Vector3(
+        (room.min.x + room.max.x) / 2,
+        0,
+        (room.min.z + room.max.z) / 2
+      );
+      const toCenter = new THREE.Vector3()
+        .subVectors(roomCenter, mid)
+        .setY(0)
+        .normalize();
+      const inward = n.dot(toCenter) > 0 ? n : n.clone().multiplyScalar(-1);
+
+      // Skip if this wall segment is behind a couch placed along the wall
+      {
+        const eps = 1e-3;
+        const margin = 0.06; // small extra around couch span
+        const nearNorth = Math.abs(a.z - b.z) < eps && Math.abs(a.z - room.max.z) < eps;
+        const nearSouth = Math.abs(a.z - b.z) < eps && Math.abs(a.z - room.min.z) < eps;
+        const nearEast = Math.abs(a.x - b.x) < eps && Math.abs(a.x - room.max.x) < eps;
+        const nearWest = Math.abs(a.x - b.x) < eps && Math.abs(a.x - room.min.x) < eps;
+        let blocked = false;
+        for (const r of couchRects) {
+          if (nearNorth) {
+            const touchesWall = Math.abs(r.z + r.halfZ - room.max.z) < 0.2; // couch backs to north wall
+            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) {
+              blocked = true; break;
+            }
+          }
+          if (nearSouth) {
+            const touchesWall = Math.abs(r.z - r.halfZ - room.min.z) < 0.2; // backs to south wall
+            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) {
+              blocked = true; break;
+            }
+          }
+          if (nearEast) {
+            const touchesWall = Math.abs(r.x + r.halfX - room.max.x) < 0.2; // backs to east wall
+            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) {
+              blocked = true; break;
+            }
+          }
+          if (nearWest) {
+            const touchesWall = Math.abs(r.x - r.halfX - room.min.x) < 0.2; // backs to west wall
+            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) {
+              blocked = true; break;
+            }
+          }
+        }
+        if (blocked) return; // don't place hole behind a couch
+      }
+
+      // Do not place holes where a doorway is carved on this wall segment
+      const epsEdge = 1e-3;
+      const idx = rooms.indexOf(room);
+      if (idx >= 0) {
+        const openings = roomOpenings[idx];
+        const doorHalf = 1.2; // keep in sync with door carving
+        const widthExtra = 0.4; // margin around the doorway
+        let isDoorSeg = false;
+        for (const o of openings) {
+          // Check which wall this edge lies on and compare lateral coordinate to doorway center
+          if (Math.abs(pos.z - room.max.z) < epsEdge && Math.abs(o.z - room.max.z) < epsEdge) {
+            if (pos.x >= o.x - (doorHalf + widthExtra) && pos.x <= o.x + (doorHalf + widthExtra)) { isDoorSeg = true; break; }
+          }
+          if (Math.abs(pos.z - room.min.z) < epsEdge && Math.abs(o.z - room.min.z) < epsEdge) {
+            if (pos.x >= o.x - (doorHalf + widthExtra) && pos.x <= o.x + (doorHalf + widthExtra)) { isDoorSeg = true; break; }
+          }
+          if (Math.abs(pos.x - room.max.x) < epsEdge && Math.abs(o.x - room.max.x) < epsEdge) {
+            if (pos.z >= o.z - (doorHalf + widthExtra) && pos.z <= o.z + (doorHalf + widthExtra)) { isDoorSeg = true; break; }
+          }
+          if (Math.abs(pos.x - room.min.x) < epsEdge && Math.abs(o.x - room.min.x) < epsEdge) {
+            if (pos.z >= o.z - (doorHalf + widthExtra) && pos.z <= o.z + (doorHalf + widthExtra)) { isDoorSeg = true; break; }
+          }
+        }
+        if (isDoorSeg) return; // skip placing hole on doorway span
+      }
+
+      // Geometry sizes
+      const depth = 0.02; // thin, sits on wall face
+      const width = 0.36;
+      const squareH = 0.3; // taller square base
+      const radius = width / 2;
+      const insetFrac = 0.85; // cylinder inset 85% into the square vertically (lower the top circle a bit)
+
+      const group = new THREE.Group();
+      // Square base (thin box)
+      const sqGeo = new THREE.BoxGeometry(depth, squareH, width);
+      const sq = new THREE.Mesh(sqGeo, holeMat);
+      sq.position.set(0, squareH / 2, 0);
+      group.add(sq);
+      // Cylinder cap (thin along depth, circle in YZ plane)
+      const cylGeo = new THREE.CylinderGeometry(radius, radius, depth, 24);
+      const cyl = new THREE.Mesh(cylGeo, holeMat);
+      cyl.rotation.z = Math.PI / 2; // align cylinder axis with X (depth)
+      // Place cylinder so it overlaps the square by 50%
+      const overlap = radius * insetFrac;
+      cyl.position.set(0, squareH + radius - overlap, 0);
+      group.add(cyl);
+
+      // Position against the wall, facing into the room
+      group.position.copy(pos);
+      group.position.y = 0; // rests on floor
+      const pushOut = wallThickness / 2 + depth / 2 + 0.002;
+      group.position.add(inward.clone().multiplyScalar(pushOut));
+      group.rotation.y = angle;
+      // Slightly raise to avoid z-fighting with floor
+      group.position.y += 0.001;
+
+      this.scene.add(group);
+      this.meshes.push(group);
+      // Record this mouse hole for gameplay logic
+      this.mouseHoles.push({ position: group.position.clone(), inward: inward.clone(), room });
+
+      // Create a matching black cutout over the baseboard area so the hole lines up visually
+      const baseT = 0.06; // baseboard thickness
+      const baseH = 0.24; // baseboard height
+      const cutGeo = new THREE.BoxGeometry(baseT + 0.005, baseH, width * 0.9);
+      const cut = new THREE.Mesh(cutGeo, holeMat);
+      cut.position.copy(pos);
+      cut.position.y = baseH / 2 + 0.001; // slight lift to avoid z-fighting
+      const inwardOffset = wallThickness / 2 + (baseT + 0.005) / 2 + 0.001;
+      cut.position.add(inward.clone().multiplyScalar(inwardOffset));
+      cut.rotation.y = angle;
+      this.scene.add(cut);
+      this.meshes.push(cut);
+    };
+
+    // Randomly add mouse holes to interior edges of rooms
+    for (let i = 0; i < rooms.length; i++) {
+      const r = rooms[i];
+      const min = r.min,
+        max = r.max;
+      const corners = [
+        new THREE.Vector3(min.x, 0, min.z),
+        new THREE.Vector3(max.x, 0, min.z),
+        new THREE.Vector3(max.x, 0, max.z),
+        new THREE.Vector3(min.x, 0, max.z),
+      ];
+      const edges = [
+        [corners[0], corners[1]],
+        [corners[1], corners[2]],
+        [corners[2], corners[3]],
+        [corners[3], corners[0]],
+      ] as const;
+      for (const [a, b] of edges) {
+        // Skip exterior perimeter edges
+        const onNorth =
+          Math.abs(a.z - houseMax.z) < 1e-3 &&
+          Math.abs(b.z - houseMax.z) < 1e-3;
+        const onSouth =
+          Math.abs(a.z - houseMin.z) < 1e-3 &&
+          Math.abs(b.z - houseMin.z) < 1e-3;
+        const onEast =
+          Math.abs(a.x - houseMax.x) < 1e-3 &&
+          Math.abs(b.x - houseMax.x) < 1e-3;
+        const onWest =
+          Math.abs(a.x - houseMin.x) < 1e-3 &&
+          Math.abs(b.x - houseMin.x) < 1e-3;
+        const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
+        if (!isInteriorEdge) continue;
+        if (Math.random() < 0.25) {
+          addMouseHoleOnEdge(r, a, b);
+        }
+      }
+    }
+
+    // Ensure a minimum number of mouse holes in the house
+    const MIN_HOLES = 3;
+    if (this.mouseHoles.length < MIN_HOLES) {
+      const candidates: { room: THREE.Box3; a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+      for (let i = 0; i < rooms.length; i++) {
+        const r = rooms[i];
+        const min = r.min, max = r.max;
+        const corners = [
+          new THREE.Vector3(min.x, 0, min.z),
+          new THREE.Vector3(max.x, 0, min.z),
+          new THREE.Vector3(max.x, 0, max.z),
+          new THREE.Vector3(min.x, 0, max.z),
+        ];
+        const edges = [
+          [corners[0], corners[1]],
+          [corners[1], corners[2]],
+          [corners[2], corners[3]],
+          [corners[3], corners[0]],
+        ] as const;
+        for (const [a, b] of edges) {
+          const onNorth = Math.abs(a.z - houseMax.z) < 1e-3 && Math.abs(b.z - houseMax.z) < 1e-3;
+          const onSouth = Math.abs(a.z - houseMin.z) < 1e-3 && Math.abs(b.z - houseMin.z) < 1e-3;
+          const onEast = Math.abs(a.x - houseMax.x) < 1e-3 && Math.abs(b.x - houseMax.x) < 1e-3;
+          const onWest = Math.abs(a.x - houseMin.x) < 1e-3 && Math.abs(b.x - houseMin.x) < 1e-3;
+          const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
+          if (!isInteriorEdge) continue;
+          candidates.push({ room: r, a, b });
+        }
+      }
+      // Add holes on random interior edges until we reach the minimum or run out
+      for (let guard = 0; guard < candidates.length && this.mouseHoles.length < MIN_HOLES; guard++) {
+        const idx = Math.floor(Math.random() * candidates.length);
+        const c = candidates[idx];
+        addMouseHoleOnEdge(c.room, c.a, c.b);
+      }
     }
 
     // Backyard fence (position relative to current house size)
@@ -810,8 +1154,7 @@ export class Level {
       return false;
     };
     // Track couch footprints placed in this level to avoid intersections
-    const couchRects: { x: number; z: number; halfX: number; halfZ: number }[] =
-      [];
+    // NOTE: declared earlier before hole generation
     const rectIntersects = (
       x: number,
       z: number,
@@ -954,6 +1297,8 @@ export class Level {
       body.position.set(x, physHeight / 2, z);
       if (couch.rotation.y !== 0)
         body.quaternion.setFromEuler(0, couch.rotation.y, 0);
+      // Tag as couch for gameplay grounding checks
+      (body as any).isCouch = true;
       this.world.addBody(body);
       this.bodies.push(body);
       let placedCount = 1;
@@ -1056,6 +1401,8 @@ export class Level {
               const body2 = new CANNON.Body({ mass: 0, shape: shape2 });
               body2.position.set(c2.x, h2 / 2, c2.z);
               if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
+              // Tag as couch for gameplay grounding checks
+              (body2 as any).isCouch = true;
               this.world.addBody(body2);
               this.bodies.push(body2);
               couchRects.push({
@@ -1097,6 +1444,40 @@ export class Level {
     while (totalCouches < minCouches && safety-- > 0) {
       const idx = Math.floor(Math.random() * rooms.length);
       totalCouches += placeCouchAlongWall(rooms[idx], roomOpenings[idx]);
+    }
+
+    // After couches are placed, remove any gameplay holes that are behind couches
+    if (this.mouseHoles.length > 0 && couchRects.length > 0) {
+      const margin = 0.06;
+      const eps = 1e-3;
+      const notBehindCouch = (h: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) => {
+        const room = h.room;
+        const pos = h.position;
+        const nearNorth = Math.abs(pos.z - room.max.z) < eps;
+        const nearSouth = Math.abs(pos.z - room.min.z) < eps;
+        const nearEast = Math.abs(pos.x - room.max.x) < eps;
+        const nearWest = Math.abs(pos.x - room.min.x) < eps;
+        for (const r of couchRects) {
+          if (nearNorth) {
+            const touchesWall = Math.abs(r.z + r.halfZ - room.max.z) < 0.2;
+            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) return false;
+          }
+          if (nearSouth) {
+            const touchesWall = Math.abs(r.z - r.halfZ - room.min.z) < 0.2;
+            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) return false;
+          }
+          if (nearEast) {
+            const touchesWall = Math.abs(r.x + r.halfX - room.max.x) < 0.2;
+            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) return false;
+          }
+          if (nearWest) {
+            const touchesWall = Math.abs(r.x - r.halfX - room.min.x) < 0.2;
+            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) return false;
+          }
+        }
+        return true;
+      };
+      this.mouseHoles = this.mouseHoles.filter(notBehindCouch);
     }
 
     // Remove spawn points that ended up under couches

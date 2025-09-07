@@ -85,7 +85,13 @@ export class CatController {
       if (eq.bi === this.body || eq.bj === this.body) {
         const n = eq.ni as import("./physics").CANNON.Vec3;
         const upY = eq.bi === this.body ? -n.y : n.y;
+        const other = eq.bi === this.body ? eq.bj : eq.bi;
         if (upY > 0.5) {
+          this.onGround = true;
+          break;
+        }
+        // Consider couch tops as ground with a more lenient normal threshold
+        if ((other as any)?.isCouch && upY > 0.1) {
           this.onGround = true;
           break;
         }
@@ -116,6 +122,10 @@ export class CatController {
         if (result.hasHit && result.body !== this.body) {
           const gap = this.body.position.y - result.hitPointWorld.y;
           if (gap <= 0.75) this.onGround = true;
+          // Be generous on couches even if ray angle/contact was odd
+          if (!this.onGround && (result.body as any)?.isCouch && gap <= 0.9) {
+            this.onGround = true;
+          }
         }
       }
     }
