@@ -23,6 +23,17 @@ Built with **Three.js** and **cannon-es**, bundled with **Vite**.
 - **R** restart level
 - **N** next level (after you clear the current house)
 
+### Controller (Gamepad)
+- **Left stick** move
+- **Right stick** camera look
+- **D‑pad Up/Down** zoom
+- **A** jump and accept/advance prompts
+- **RT/RB** run
+- **LT/LB** sneak
+- **X or B** pounce lock‑on
+- **Back/Select** restart level
+- **Start** next level (after you clear the current house)
+
 ## Run locally
 - Requires Node 18+
 - Install dependencies and start:
