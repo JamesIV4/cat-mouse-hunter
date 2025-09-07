@@ -97,6 +97,14 @@ export class CatController {
         }
       }
     }
+
+    // Extra gravity for the cat: apply an additional 1g when airborne
+    // to effectively double the downward pull while in the air.
+    if (!this.onGround && this.body && (this.body as any).world) {
+      const g = (this.body.world as any).gravity?.y ?? -9.82;
+      // Add an extra gravity force equal to mass * g (g is negative)
+      this.body.force.y += this.body.mass * g;
+    }
     // Fallback: short downward raycast if no contact equations detected
     if (!this.onGround) {
       const Ray: any = (CANNON as any).Ray;

@@ -6,6 +6,7 @@ import { Level, LevelSpec } from "./level";
 import { Input } from "./input";
 import { UI } from "./ui";
 import { Sound } from "./audio";
+import { ParticleSystem } from "./particles";
 
 const app = document.getElementById("app")!;
 
@@ -75,6 +76,7 @@ if (sens) {
 
 const level = new Level(world, scene);
 let currentLevel = 1;
+const particles = new ParticleSystem(world, scene);
 
 function specForLevel(n: number): LevelSpec {
   const mouseCount = 4 + Math.floor(n * 1.5);
@@ -105,6 +107,8 @@ let bannerVisible = false;
 
 function createLevel(n: number) {
   level.generate(specForLevel(n));
+  // Clear any leftover particles when a new level loads
+  particles.clear();
   if (cat) {
     // remove old cat visuals; physics body will be GC'd if removed, but we keep same body for simplicity by recreating
     scene.remove(cat.mesh);
@@ -170,6 +174,7 @@ function loop() {
   // Provide player position so level can pause far dynamic bodies
   const playerPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
   level.update(dt, playerPos);
+  particles.update(dt);
   cat.update(
     dt,
     camera,
@@ -187,6 +192,9 @@ function loop() {
     const d = m.mesh.position.distanceTo(cat.mesh.position);
     // Slightly larger catch radius to match bigger mouse collider
     if (d < 0.7) {
+      // Spawn a gentle star puff at the catch position
+      const p = m.mesh.position.clone();
+      particles.spawn(p, 18 + Math.floor(Math.random() * 10));
       m.kill();
       sfx.mouseDie();
       caught++;
