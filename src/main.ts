@@ -110,6 +110,8 @@ function createLevel(n: number) {
   level.generate(specForLevel(n));
   // Clear any leftover particles when a new level loads
   particles.clear();
+  // Ensure any looping purr is stopped when leaving banner/starting a level
+  sfx.stopCatPurr();
   if (cat) {
     // remove old cat visuals; physics body will be GC'd if removed, but we keep same body for simplicity by recreating
     scene.remove(cat.mesh);
@@ -197,7 +199,9 @@ function loop() {
       const p = m.mesh.position.clone();
       particles.spawn(p, 18 + Math.floor(Math.random() * 10));
       m.kill();
+      // Play death squeak and cat trill on catch
       sfx.mouseDie();
+      sfx.catTrill();
       caught++;
       remaining--;
       UI.setCaught(caught);
@@ -207,6 +211,8 @@ function loop() {
           `<h2>House cleared!</h2><p>You caught ${caught} mice.</p><p>Press <b>N</b> for the next house.</p>`
         );
         bannerVisible = true;
+        // Soft purr while banner is visible
+        sfx.startCatPurr();
       }
     }
   }
