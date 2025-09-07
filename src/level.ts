@@ -425,8 +425,8 @@ export class Level {
         }
       }
     }
-    // Optional backyard opening from a back room
-    const backIdx = rooms.findIndex((r) => Math.abs(r.max.z - 10) < eps);
+    // Optional backyard opening from a back room (north side of house)
+    const backIdx = rooms.findIndex((r) => Math.abs(r.max.z - houseMax.z) < eps);
     if (backIdx >= 0) {
       const r = rooms[backIdx];
       roomOpenings[backIdx].push(
@@ -438,9 +438,19 @@ export class Level {
       drawRoomWalls(rooms[i], roomOpenings[i]);
     }
 
-    // Backyard fence
-    const yardMin = new THREE.Vector3(-7, 0, 10.2);
-    const yardMax = new THREE.Vector3(7, 0, 20);
+    // Backyard fence (position relative to current house size)
+    const yardGap = 0.2; // small gap beyond exterior wall
+    const yardDepth = 10; // constant backyard depth
+    const yardMin = new THREE.Vector3(
+      houseMin.x + wallThickness, // align with exterior walls
+      0,
+      houseMax.z + yardGap
+    );
+    const yardMax = new THREE.Vector3(
+      houseMax.x - wallThickness,
+      0,
+      houseMax.z + yardGap + yardDepth
+    );
     const fenceH = 1.2;
     const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8a7a5b });
     const fence = (a: THREE.Vector3, b: THREE.Vector3) => {

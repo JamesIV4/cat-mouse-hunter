@@ -1,10 +1,11 @@
 import * as THREE from "three";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { CANNON } from "./physics";
 import { randRange, clamp } from "./utils";
 
 export class Mouse {
   body: CANNON.Body;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   wanderTimer = 0;
   pathTimer = 0;
   target: THREE.Vector3 | null = null;
@@ -36,11 +37,38 @@ export class Mouse {
     this.body.linearDamping = 0.2;
     world.addBody(this.body);
 
-    const geo = new THREE.SphereGeometry(0.12, 12, 12);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x6f4d2b });
-    this.mesh = new THREE.Mesh(geo, mat);
-    this.mesh.castShadow = true;
-    scene.add(this.mesh);
+    const container = new THREE.Group();
+    this.mesh = container;
+    scene.add(container);
+
+    Promise.all([loadRatModel(), loadMouseTexture()]).then(([model, tex]) => {
+      const instance = model.clone(true);
+      instance.traverse((o: any) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+          if (tex) {
+            const mtl = o.material as THREE.Material | THREE.Material[];
+            const apply = (mat: any) => {
+              if (mat && "map" in mat) {
+                mat.map = tex;
+                if ("side" in mat) mat.side = THREE.DoubleSide;
+                if ("needsUpdate" in mat) mat.needsUpdate = true;
+              }
+            };
+            if (Array.isArray(mtl)) mtl.forEach(apply);
+            else apply(mtl);
+          }
+        }
+      });
+      // Center horizontally and align feet to y=0
+      const box = new THREE.Box3().setFromObject(instance);
+      const center = box.getCenter(new THREE.Vector3());
+      instance.position.x -= center.x;
+      instance.position.z -= center.z;
+      instance.position.y -= box.min.y;
+      container.add(instance);
+    });
 
     // Initialize random heading
     const ang = randRange(0, Math.PI * 2);
@@ -61,9 +89,7 @@ export class Mouse {
 
     // Regular patrol: pick random waypoint when needed
     const needNew =
-      !this.target ||
-      this.pathTimer <= 0 ||
-      this.target.distanceTo(pos) < 0.3;
+      !this.target || this.pathTimer <= 0 || this.target.distanceTo(pos) < 0.3;
     if (needNew) {
       const margin = 0.4;
       const tx = randRange(
@@ -131,4 +157,59 @@ export class Mouse {
     this.mesh.visible = false;
     this.world.removeBody(this.body);
   }
+}
+
+let mouseModelPromise: Promise<THREE.Object3D> | null = null;
+function loadRatModel(): Promise<THREE.Object3D> {
+  if (!mouseModelPromise) {
+    const loader = new FBXLoader();
+    mouseModelPromise = new Promise((resolve, reject) => {
+      const url = new URL(
+        "../models/mouse/mouse-exported.fbx",
+        import.meta.url
+      ).toString();
+      loader.load(
+        url,
+        (obj) => {
+          const preBox = new THREE.Box3().setFromObject(obj);
+          const preSize = new THREE.Vector3();
+          preBox.getSize(preSize);
+          const height = preSize.y || 1;
+          const targetHeight = 0.2; // ~10x previous primitive height (0.24)
+          const factor = targetHeight / height;
+          obj.scale.setScalar(factor);
+          resolve(obj);
+        },
+        undefined,
+        (err) => reject(err)
+      );
+    });
+  }
+  return mouseModelPromise;
+}
+
+let mouseTexturePromise: Promise<THREE.Texture | null> | null = null;
+function loadMouseTexture(): Promise<THREE.Texture | null> {
+  if (!mouseTexturePromise) {
+    mouseTexturePromise = new Promise((resolve) => {
+      const texUrl = new URL(
+        "../models/mouse/mouse.png",
+        import.meta.url
+      ).toString();
+      const tl = new THREE.TextureLoader();
+      tl.load(
+        texUrl,
+        (tex) => {
+          try {
+            (tex as any).colorSpace =
+              (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+          } catch {}
+          resolve(tex);
+        },
+        undefined,
+        () => resolve(null)
+      );
+    });
+  }
+  return mouseTexturePromise;
 }

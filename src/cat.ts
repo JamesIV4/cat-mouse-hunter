@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { CANNON } from "./physics";
 import { Input } from "./input";
 import { clamp } from "./utils";
@@ -36,42 +37,34 @@ export class CatController {
     this.body.fixedRotation = true;
     world.addBody(this.body);
 
-    // Visual cat: simple capsule + head sphere + tail
-    const g = new THREE.Group();
-    const bodyGeo = new THREE.CapsuleGeometry(0.35, 0.6, 8, 16);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x202020,
-      roughness: 0.6,
-      metalness: 0.0,
+    const container = new THREE.Group();
+    this.mesh = container;
+    scene.add(container);
+
+    loadCatModel().then((model) => {
+      const instance = model.clone(true);
+      instance.traverse((o: any) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      // Center horizontally and place feet at local y=0
+      const box = new THREE.Box3().setFromObject(instance);
+      const center = box.getCenter(new THREE.Vector3());
+      instance.position.x -= center.x;
+      instance.position.z -= center.z;
+      instance.position.y -= box.min.y;
+      container.add(instance);
     });
-    const bodyMesh = new THREE.Mesh(bodyGeo, mat);
-    bodyMesh.position.y = 0.75;
-    g.add(bodyMesh);
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.25, 16, 16),
-      new THREE.MeshStandardMaterial({ color: 0x333333 })
-    );
-    head.position.set(0, 1.25, 0.4);
-    g.add(head);
-    const earGeo = new THREE.ConeGeometry(0.12, 0.2, 8);
-    const ear1 = new THREE.Mesh(earGeo, mat);
-    ear1.position.set(-0.12, 1.45, 0.35);
-    ear1.rotation.x = 0;
-    const ear2 = ear1.clone();
-    ear2.position.x = 0.12;
-    g.add(ear1, ear2);
-    const tail = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.06, 0.8, 8),
-      mat
-    );
-    tail.position.set(0, 1.0, -0.4);
-    tail.rotation.x = -Math.PI / 4;
-    g.add(tail);
-    this.mesh = g;
-    scene.add(this.mesh);
   }
 
-  update(dt: number, camera: THREE.PerspectiveCamera, mice: THREE.Object3D[], colliders: THREE.Object3D[] = []) {
+  update(
+    dt: number,
+    camera: THREE.PerspectiveCamera,
+    mice: THREE.Object3D[],
+    colliders: THREE.Object3D[] = []
+  ) {
     this.onGround = false;
     // Grounded check via cannon-es narrowphase contact equations
     const world = this.body.world as any;
@@ -93,9 +86,21 @@ export class CatController {
       if (Ray && RaycastResult) {
         const ray = new Ray();
         const result = new RaycastResult();
-        ray.from.set(this.body.position.x, this.body.position.y, this.body.position.z);
-        ray.to.set(this.body.position.x, this.body.position.y - 0.7, this.body.position.z);
-        ray.intersectWorld(this.body.world, { mode: Ray.ANY, result, skipBackfaces: true });
+        ray.from.set(
+          this.body.position.x,
+          this.body.position.y,
+          this.body.position.z
+        );
+        ray.to.set(
+          this.body.position.x,
+          this.body.position.y - 0.7,
+          this.body.position.z
+        );
+        ray.intersectWorld(this.body.world, {
+          mode: Ray.ANY,
+          result,
+          skipBackfaces: true,
+        });
         if (result.hasHit && result.body !== this.body) {
           const gap = this.body.position.y - result.hitPointWorld.y;
           if (gap <= 0.75) this.onGround = true;
@@ -248,7 +253,15 @@ export class CatController {
       this._raycaster.far = dist;
       const hits = this._raycaster
         .intersectObjects(colliders, true)
-        .filter(h => h.object !== this.mesh);
+        // Ignore intersections with the cat's own model (any descendant of this.mesh)
+        .filter((h) => {
+          let o: any = h.object;
+          while (o) {
+            if (o === this.mesh) return false;
+            o = o.parent;
+          }
+          return true;
+        });
       if (hits.length > 0) {
         const margin = 0.25;
         const hit = hits[0];
@@ -259,4 +272,35 @@ export class CatController {
     camera.position.lerp(camPos, 0.15);
     camera.lookAt(camTarget);
   }
+}
+
+let catModelPromise: Promise<THREE.Object3D> | null = null;
+function loadCatModel(): Promise<THREE.Object3D> {
+  if (!catModelPromise) {
+    const loader = new FBXLoader();
+    catModelPromise = new Promise((resolve, reject) => {
+      const url = new URL(
+        "../models/cat/cat-exported2.fbx",
+        import.meta.url
+      ).toString();
+      loader.load(
+        url,
+        (obj) => {
+          // Scale the cat so its height roughly matches the physics body diameter (~0.9)
+          const preBox = new THREE.Box3().setFromObject(obj);
+          const preSize = new THREE.Vector3();
+          preBox.getSize(preSize);
+          const height = preSize.y || 1;
+          // Match visual height roughly to physics body diameter (~0.9)
+          const targetHeight = 1;
+          const factor = targetHeight / height;
+          obj.scale.setScalar(factor);
+          resolve(obj);
+        },
+        undefined,
+        (err) => reject(err)
+      );
+    });
+  }
+  return catModelPromise;
 }
