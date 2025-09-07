@@ -1,7 +1,16 @@
 // Pre-resolve SFX asset URLs so Vite includes them in the build
-const SFX_MOUSE_SQUEEK = new URL("../sfx/mouse-squeek.wav", import.meta.url).toString();
-const SFX_MOUSE_DIE = new URL("../sfx/mouse-die.wav", import.meta.url).toString();
-const SFX_CAT_TRILL = new URL("../sfx/cat-trill.wav", import.meta.url).toString();
+const SFX_MOUSE_SQUEEK = new URL(
+  "../sfx/mouse-squeek.wav",
+  import.meta.url
+).toString();
+const SFX_MOUSE_DIE = new URL(
+  "../sfx/mouse-die.wav",
+  import.meta.url
+).toString();
+const SFX_CAT_TRILL = new URL(
+  "../sfx/cat-trill.wav",
+  import.meta.url
+).toString();
 const SFX_CAT_PURR = new URL("../sfx/cat-pur.wav", import.meta.url).toString();
 
 export class Sound {
@@ -91,7 +100,7 @@ export class Sound {
   // Convenience wrappers
   mouseSqueek() {
     // Slightly quieter to avoid being harsh
-    this.playSample(SFX_MOUSE_SQUEEK, 0.7, 1);
+    this.playSample(SFX_MOUSE_SQUEEK, 0.45, 1);
   }
   mouseDie() {
     this.playSample(SFX_MOUSE_DIE, 1, 1);
@@ -99,7 +108,7 @@ export class Sound {
 
   // New: cat sounds
   catTrill() {
-    this.playSample(SFX_CAT_TRILL, 0.16, 1);
+    this.playSample(SFX_CAT_TRILL, 0.12, 1);
   }
 
   async startCatPurr(volume = 0.45) {
