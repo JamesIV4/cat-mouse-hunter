@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { CANNON } from "./physics";
 import { Input } from "./input";
 import { clamp } from "./utils";
@@ -11,6 +12,12 @@ export class CatController {
   mesh: THREE.Group;
   state: CatState = "Idle";
   onGround = false;
+  // Animation system
+  private mixer: THREE.AnimationMixer | null = null;
+  private actions: Record<string, THREE.AnimationAction> = {};
+  private actionByKind: Partial<Record<"idle" | "walk" | "run", string>> = {};
+  private currentAction: string | null = null;
+  private animBaseSpeed = 1.15; // slightly faster baseline playback
   camYaw = 0;
   camPitch = -0.3;
   camDist = 4.5;
@@ -42,11 +49,18 @@ export class CatController {
     scene.add(container);
 
     Promise.all([loadCatModel(), loadCatTexture()]).then(([model, tex]) => {
-      const instance = model.clone(true);
+      // Clone rigged model with SkeletonUtils to preserve bone bindings
+      const instance = SkeletonUtils.clone(model) as THREE.Object3D;
       instance.traverse((o: any) => {
-        if (o.isMesh) {
+        if (o.isSkinnedMesh || o.isMesh) {
           o.castShadow = true;
           o.receiveShadow = true;
+          // Ensure skinned materials are flagged correctly
+          const ensureSkin = (mat: any) => {
+            if (mat && "skinning" in mat && (o.isSkinnedMesh || o.isMesh)) {
+              mat.skinning = true;
+            }
+          };
           if (tex) {
             const mtl = o.material as THREE.Material | THREE.Material[];
             const apply = (mat: any) => {
@@ -55,10 +69,17 @@ export class CatController {
                 if ("side" in mat) mat.side = THREE.DoubleSide;
                 if ("needsUpdate" in mat) mat.needsUpdate = true;
               }
+              ensureSkin(mat);
             };
             if (Array.isArray(mtl)) mtl.forEach(apply);
             else apply(mtl);
+          } else if (o.material) {
+            const mtl = o.material as THREE.Material | THREE.Material[];
+            if (Array.isArray(mtl)) mtl.forEach(ensureSkin);
+            else ensureSkin(mtl);
           }
+          // Reduce culling issues with animated bounds
+          o.frustumCulled = false;
         }
       });
       // Center horizontally and place feet at local y=0
@@ -68,6 +89,34 @@ export class CatController {
       instance.position.z -= center.z;
       instance.position.y -= box.min.y;
       container.add(instance);
+
+      // Setup animation mixer/actions if clips are present on the source model
+      const clips: THREE.AnimationClip[] = (model as any).animations || [];
+      if (clips && clips.length > 0) {
+        this.mixer = new THREE.AnimationMixer(instance);
+        this.actions = {};
+        for (const clip of clips) {
+          const a = this.mixer.clipAction(clip);
+          a.loop = THREE.LoopRepeat;
+          a.clampWhenFinished = false;
+          this.actions[clip.name.toLowerCase()] = a;
+        }
+        // Prefer common names; fallbacks if not present
+        const names = Object.keys(this.actions);
+        const findName = (alts: string[]) =>
+          names.find((n) => alts.some((k) => n.includes(k)));
+        this.actionByKind.idle =
+          findName(["idle", "stand"]) || names[0] || undefined;
+        this.actionByKind.walk = findName(["walk"]) || this.actionByKind.idle;
+        this.actionByKind.run =
+          findName(["run", "jog", "sprint"]) || this.actionByKind.walk;
+        // Start idle if available
+        const start = this.actionByKind.idle;
+        if (start && this.actions[start]) {
+          this.actions[start].reset().fadeIn(0.2).play();
+          this.currentAction = start;
+        }
+      }
     });
   }
 
@@ -136,6 +185,42 @@ export class CatController {
           }
         }
       }
+    }
+
+    // Animation state machine by velocity magnitude
+    if (this.mixer && this.actions) {
+      const vx = this.body.velocity.x;
+      const vz = this.body.velocity.z;
+      const speedH = Math.hypot(vx, vz);
+      let targetKind: "idle" | "walk" | "run" = "idle";
+      if (speedH > 3.0) targetKind = "run";
+      else if (speedH > 0.4) targetKind = "walk";
+      const targetName = (this.actionByKind[targetKind] || this.currentAction || "").toLowerCase();
+      if (targetName && targetName !== this.currentAction && this.actions[targetName]) {
+        const next = this.actions[targetName];
+        const prev = this.currentAction ? this.actions[this.currentAction] : null;
+        next.reset().fadeIn(0.15).play();
+        if (prev) prev.fadeOut(0.15);
+        this.currentAction = targetName;
+      }
+      // Simple speed-based timescaling for locomotion clips
+      if (this.currentAction) {
+        const act = this.actions[this.currentAction];
+        if (act) {
+          if (this.currentAction === (this.actionByKind.run || "").toLowerCase()) {
+            act.timeScale = THREE.MathUtils.clamp(speedH / 4.0, 0.7, 2.0);
+          } else if (this.currentAction === (this.actionByKind.walk || "").toLowerCase()) {
+            act.timeScale = THREE.MathUtils.clamp(speedH / 1.5, 0.6, 1.6);
+          } else {
+            act.timeScale = 1.0;
+          }
+        }
+      }
+      // Pause animation when not moving or while airborne (jump/pounce)
+      // Using mixer.timeScale so all clips freeze cleanly
+      const paused = speedH <= 0.05 || !this.onGround;
+      this.mixer.timeScale = paused ? 0 : this.animBaseSpeed;
+      this.mixer.update(dt);
     }
 
     const mouseDelta = this.input.consumeMouseDelta();
@@ -343,7 +428,7 @@ function loadCatModel(): Promise<THREE.Object3D> {
     const loader = new FBXLoader();
     catModelPromise = new Promise((resolve, reject) => {
       const url = new URL(
-        "../models/cat/cat-exported2.fbx",
+        "../models/cat/cat.fbx",
         import.meta.url
       ).toString();
       loader.load(
