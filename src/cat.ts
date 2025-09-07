@@ -41,12 +41,24 @@ export class CatController {
     this.mesh = container;
     scene.add(container);
 
-    loadCatModel().then((model) => {
+    Promise.all([loadCatModel(), loadCatTexture()]).then(([model, tex]) => {
       const instance = model.clone(true);
       instance.traverse((o: any) => {
         if (o.isMesh) {
           o.castShadow = true;
           o.receiveShadow = true;
+          if (tex) {
+            const mtl = o.material as THREE.Material | THREE.Material[];
+            const apply = (mat: any) => {
+              if (mat && "map" in mat) {
+                mat.map = tex;
+                if ("side" in mat) mat.side = THREE.DoubleSide;
+                if ("needsUpdate" in mat) mat.needsUpdate = true;
+              }
+            };
+            if (Array.isArray(mtl)) mtl.forEach(apply);
+            else apply(mtl);
+          }
         }
       });
       // Center horizontally and place feet at local y=0
@@ -291,8 +303,7 @@ function loadCatModel(): Promise<THREE.Object3D> {
           const preSize = new THREE.Vector3();
           preBox.getSize(preSize);
           const height = preSize.y || 1;
-          // Match visual height roughly to physics body diameter (~0.9)
-          const targetHeight = 1;
+          const targetHeight = 1.2;
           const factor = targetHeight / height;
           obj.scale.setScalar(factor);
           resolve(obj);
@@ -303,4 +314,30 @@ function loadCatModel(): Promise<THREE.Object3D> {
     });
   }
   return catModelPromise;
+}
+
+let catTexturePromise: Promise<THREE.Texture | null> | null = null;
+function loadCatTexture(): Promise<THREE.Texture | null> {
+  if (!catTexturePromise) {
+    catTexturePromise = new Promise((resolve) => {
+      const texUrl = new URL(
+        "../models/cat/cat.jpg",
+        import.meta.url
+      ).toString();
+      const tl = new THREE.TextureLoader();
+      tl.load(
+        texUrl,
+        (tex) => {
+          try {
+            (tex as any).colorSpace =
+              (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+          } catch {}
+          resolve(tex);
+        },
+        undefined,
+        () => resolve(null)
+      );
+    });
+  }
+  return catTexturePromise;
 }
