@@ -1286,17 +1286,41 @@ export class Level {
         couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
       }
 
-      // Physics proxy box for couch
-      const physLen = length;
-      const physDepth = depth;
-      const physHeight = height;
-      const shape = new CANNON.Box(
-        new CANNON.Vec3(physLen / 2, physHeight / 2, physDepth / 2)
-      );
-      const body = new CANNON.Body({ mass: 0, shape });
-      body.position.set(x, physHeight / 2, z);
-      if (couch.rotation.y !== 0)
-        body.quaternion.setFromEuler(0, couch.rotation.y, 0);
+      // Physics proxies for couch: seat slab + backrest (better alignment/grounding)
+      const legH = 0.1;
+      const baseThick = 0.08;
+      const seatH = 0.4;
+      const backH = height - seatH;
+      const armW = Math.min(0.18 * (length / (length || 1)), Math.max(0.12, length * 0.08));
+      const seatTopY = legH + baseThick + seatH; // top surface of the seating area
+
+      const body = new CANNON.Body({ mass: 0 });
+      // 1) Seat slab (thin, matches top surface for correct grounding)
+      {
+        const seatWidth = Math.max(0.2, length - armW * 2);
+        const seatDepth = Math.max(0.2, depth - 0.06);
+        const seatThickness = 0.12; // thin slab for collision; keeps top aligned with visuals
+        const seatShape = new CANNON.Box(
+          new CANNON.Vec3(seatWidth / 2, seatThickness / 2, seatDepth / 2)
+        );
+        // Center the slab so that its top is at seatTopY
+        const seatOffset = new CANNON.Vec3(0, seatTopY - seatThickness / 2, 0);
+        body.addShape(seatShape, seatOffset as any);
+      }
+      // 2) Backrest blocker (thin tall box at the back so you can't clip through)
+      {
+        const backWidth = Math.max(0.2, length - armW * 2);
+        const backThickness = 0.12;
+        const backShape = new CANNON.Box(
+          new CANNON.Vec3(backWidth / 2, Math.max(0.1, backH) / 2, backThickness / 2)
+        );
+        const backCenterY = legH + baseThick + seatH + Math.max(0.1, backH) / 2;
+        const backOffset = new CANNON.Vec3(0, backCenterY, -(depth / 2) + backThickness / 2 + 0.06);
+        body.addShape(backShape, backOffset as any);
+      }
+      // Position and rotate compound body to match the mesh
+      body.position.set(x, 0, z);
+      if (couch.rotation.y !== 0) body.quaternion.setFromEuler(0, couch.rotation.y, 0);
       // Tag as couch for gameplay grounding checks
       (body as any).isCouch = true;
       this.world.addBody(body);
@@ -1391,15 +1415,41 @@ export class Level {
               couch2.rotation.y = yaw2;
               this.scene.add(couch2);
               this.meshes.push(couch2);
-              const shape2 = new CANNON.Box(
-                new CANNON.Vec3(
-                  (Math.abs(Math.sin(yaw2)) > 0.5 ? dep2 : len2) / 2,
-                  h2 / 2,
-                  (Math.abs(Math.sin(yaw2)) > 0.5 ? len2 : dep2) / 2
-                )
-              );
-              const body2 = new CANNON.Body({ mass: 0, shape: shape2 });
-              body2.position.set(c2.x, h2 / 2, c2.z);
+              // Secondary (L) couch: use same improved seat/back proxies
+              const legH2 = 0.1;
+              const baseThick2 = 0.08;
+              const seatH2 = 0.4;
+              const backH2 = h2 - seatH2;
+              const armW2 = Math.min(0.18 * (len2 / (len2 || 1)), Math.max(0.12, len2 * 0.08));
+              const seatTopY2 = legH2 + baseThick2 + seatH2;
+              const body2 = new CANNON.Body({ mass: 0 });
+              // Seat slab
+              {
+                const seatWidth2 = Math.max(0.2, len2 - armW2 * 2);
+                const seatDepth2 = Math.max(0.2, dep2 - 0.06);
+                const seatThickness2 = 0.12;
+                const seatShape2 = new CANNON.Box(
+                  new CANNON.Vec3(seatWidth2 / 2, seatThickness2 / 2, seatDepth2 / 2)
+                );
+                const seatOffset2 = new CANNON.Vec3(0, seatTopY2 - seatThickness2 / 2, 0);
+                body2.addShape(seatShape2, seatOffset2 as any);
+              }
+              // Backrest blocker
+              {
+                const backWidth2 = Math.max(0.2, len2 - armW2 * 2);
+                const backThickness2 = 0.12;
+                const backShape2 = new CANNON.Box(
+                  new CANNON.Vec3(backWidth2 / 2, Math.max(0.1, backH2) / 2, backThickness2 / 2)
+                );
+                const backCenterY2 = legH2 + baseThick2 + seatH2 + Math.max(0.1, backH2) / 2;
+                const backOffset2 = new CANNON.Vec3(
+                  0,
+                  backCenterY2,
+                  -(dep2 / 2) + backThickness2 / 2 + 0.06
+                );
+                body2.addShape(backShape2, backOffset2 as any);
+              }
+              body2.position.set(c2.x, 0, c2.z);
               if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
               // Tag as couch for gameplay grounding checks
               (body2 as any).isCouch = true;
