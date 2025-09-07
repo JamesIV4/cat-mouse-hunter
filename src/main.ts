@@ -81,13 +81,18 @@ function specForLevel(n: number): LevelSpec {
   // Scale house size with level
   const houseHalfSize = 10 + Math.min(20, Math.floor(n * 2)); // grows up to +20
   const sizeScale = (houseHalfSize / 10);
+  const houseArea = (houseHalfSize * 2) * (houseHalfSize * 2);
+  // Aim for similar room density across sizes
+  const desiredRooms = Math.min(14, 3 + Math.floor(n * 0.8) + Math.floor((sizeScale - 1) * 3));
+  const roomDensity = desiredRooms / houseArea;
   return {
     miceRequired: Math.min(mouseCount, 4 + n),
     mouseCount,
     mouseSpeed: 2.5 + n * 0.2,
-    roomCount: Math.min(14, 3 + Math.floor(n * 0.8) + Math.floor((sizeScale - 1) * 3)),
+    roomCount: desiredRooms,
     clutterCount: Math.floor((20 + n * 5) * sizeScale * sizeScale),
     houseHalfSize,
+    roomDensity,
   };
 }
 

@@ -9,6 +9,7 @@ export type LevelSpec = {
   roomCount: number;
   clutterCount: number;
   houseHalfSize: number; // controls house footprint size per level
+  roomDensity?: number; // rooms per square meter
 };
 
 export class Level {
@@ -81,39 +82,69 @@ export class Level {
     const houseMin = new THREE.Vector3(-H, 0, -H);
     const houseMax = new THREE.Vector3(H, 3, H);
     const house = new THREE.Box3(houseMin.clone(), houseMax.clone());
-    // Partition into rooms
+    // Partition into rooms using density and a minimum room size based on door width
     const rooms: THREE.Box3[] = [];
     let remaining = [house];
-    for (let i = 0; i < spec.roomCount - 1; i++) {
-      if (remaining.length === 0) break;
-      const box = remaining.pop()!;
+    const doorWidth = 1.2 * 2; // matches door carving (doorHalf=1.2)
+    const minRoomSize = doorWidth + 0.6; // slightly larger than a door
+    // Determine desired room count from density and house area
+    const area = (houseMax.x - houseMin.x) * (houseMax.z - houseMin.z);
+    const density = (typeof spec.roomDensity === 'number' && spec.roomDensity! > 0)
+      ? spec.roomDensity!
+      : Math.max(0.002, spec.roomCount / Math.max(1, area));
+    const targetRooms = Math.max(1, Math.min(48, Math.floor(area * density)));
+
+    // Greedy split largest rooms until target reached or no valid splits
+    let guard = 0;
+    while (remaining.length + rooms.length < targetRooms && guard++ < 500) {
+      // pick the largest box to split
+      let idx = -1, bestA = -1;
+      for (let i = 0; i < remaining.length; i++) {
+        const b = remaining[i];
+        const sz = new THREE.Vector3().subVectors(b.max, b.min);
+        const a = sz.x * sz.z;
+        if (a > bestA) { bestA = a; idx = i; }
+      }
+      if (idx < 0) break;
+      const box = remaining.splice(idx, 1)[0];
       const size = new THREE.Vector3().subVectors(box.max, box.min);
-      if (size.x > size.z) {
-        // split along X (no gap so rooms touch; walls we add will define thickness)
-        const mid = box.min.x + size.x * randRange(0.35, 0.65);
-        const left = new THREE.Box3(
-          box.min.clone(),
-          new THREE.Vector3(mid, box.max.y, box.max.z)
-        );
-        const right = new THREE.Box3(
-          new THREE.Vector3(mid, box.min.y, box.min.z),
-          box.max.clone()
-        );
-        remaining.push(left, right);
-      } else {
-        // split along Z
-        const mid = box.min.z + size.z * randRange(0.35, 0.65);
-        const near = new THREE.Box3(
-          box.min.clone(),
-          new THREE.Vector3(box.max.x, box.max.y, mid)
-        );
-        const far = new THREE.Box3(
-          new THREE.Vector3(box.min.x, box.min.y, mid),
-          box.max.clone()
-        );
-        remaining.push(near, far);
+      let splitAlongX = size.x > size.z;
+      // Try multiple candidate splits
+      let didSplit = false;
+      for (let attempt = 0; attempt < 8 && !didSplit; attempt++) {
+        const alongX = (attempt < 4) ? splitAlongX : !splitAlongX;
+        if (alongX) {
+          const minCut = box.min.x + minRoomSize;
+          const maxCut = box.max.x - minRoomSize;
+          if (maxCut - minCut <= 0.5) continue;
+          const mid = randRange(minCut, maxCut);
+          const left = new THREE.Box3(box.min.clone(), new THREE.Vector3(mid, box.max.y, box.max.z));
+          const right = new THREE.Box3(new THREE.Vector3(mid, box.min.y, box.min.z), box.max.clone());
+          const lsz = new THREE.Vector3().subVectors(left.max, left.min);
+          const rsz = new THREE.Vector3().subVectors(right.max, right.min);
+          if (lsz.x >= minRoomSize && lsz.z >= minRoomSize && rsz.x >= minRoomSize && rsz.z >= minRoomSize) {
+            remaining.push(left, right); didSplit = true;
+          }
+        } else {
+          const minCut = box.min.z + minRoomSize;
+          const maxCut = box.max.z - minRoomSize;
+          if (maxCut - minCut <= 0.5) continue;
+          const mid = randRange(minCut, maxCut);
+          const near = new THREE.Box3(box.min.clone(), new THREE.Vector3(box.max.x, box.max.y, mid));
+          const far = new THREE.Box3(new THREE.Vector3(box.min.x, box.min.y, mid), box.max.clone());
+          const nsz = new THREE.Vector3().subVectors(near.max, near.min);
+          const fsz = new THREE.Vector3().subVectors(far.max, far.min);
+          if (nsz.x >= minRoomSize && nsz.z >= minRoomSize && fsz.x >= minRoomSize && fsz.z >= minRoomSize) {
+            remaining.push(near, far); didSplit = true;
+          }
+        }
+      }
+      if (!didSplit) {
+        // cannot split further; accept as final room
+        rooms.push(box);
       }
     }
+    // Move remaining to rooms
     rooms.push(...remaining);
     this.roomBoxes = rooms;
 
