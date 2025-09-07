@@ -118,7 +118,7 @@ export class Level {
     const wallHeight = 7.5;
     const wallThickness = 0.2;
     const wallMat = new THREE.MeshStandardMaterial({
-      color: 0xdedede,
+      color: 0xF5F1E8, // very light beige/off-white
       roughness: 0.9,
     });
     const addWall = (p1: THREE.Vector3, p2: THREE.Vector3, height: number) => {
@@ -328,7 +328,7 @@ export class Level {
     );
 
     // Hard floors and ceilings for rooms, plus yard
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xcfcfcf });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xC8A97E }); // light wood brown
     const ceilMat = new THREE.MeshStandardMaterial({ color: 0xe6e6e6 });
     for (const r of rooms) {
       const size = new THREE.Vector3().subVectors(r.max, r.min);
