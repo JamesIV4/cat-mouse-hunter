@@ -42,13 +42,12 @@ Built with **Three.js** and **cannon-es**, bundled with **Vite**.
 - Install dependencies and start:
   ```bash
   npm install
-  npm run dev
+  npm start
   ```
 - Browser will open automatically. If not, visit http://localhost:5173
 
-## Build
+## Build (for publishing to GitHub Pages)
 
 ```bash
 npm run build
-npm run preview
 ```
