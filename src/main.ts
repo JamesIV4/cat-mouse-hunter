@@ -77,6 +77,7 @@ if (sens) {
 const level = new Level(world, scene);
 let currentLevel = 1;
 const particles = new ParticleSystem(world, scene);
+particles.prewarm();
 
 function specForLevel(n: number): LevelSpec {
   const mouseCount = 4 + Math.floor(n * 1.5);
