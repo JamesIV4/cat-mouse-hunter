@@ -1099,6 +1099,24 @@ export class Level {
       totalCouches += placeCouchAlongWall(rooms[idx], roomOpenings[idx]);
     }
 
+    // Remove spawn points that ended up under couches
+    if (this.spawnPoints.length > 0 && couchRects.length > 0) {
+      const margin = 0.1; // small clearance around couch footprint
+      this.spawnPoints = this.spawnPoints.filter((p) => {
+        for (const r of couchRects) {
+          if (
+            p.x >= r.x - r.halfX - margin &&
+            p.x <= r.x + r.halfX + margin &&
+            p.z >= r.z - r.halfZ - margin &&
+            p.z <= r.z + r.halfZ + margin
+          ) {
+            return false; // inside a couch footprint
+          }
+        }
+        return true;
+      });
+    }
+
     // Clutter: dynamic physics objects randomly around rooms (not on furniture)
     for (let i = 0; i < spec.clutterCount; i++) {
       const r = choice(rooms);

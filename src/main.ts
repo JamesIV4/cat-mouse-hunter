@@ -129,7 +129,7 @@ function createLevel(n: number) {
     const p =
       level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)] ||
       new THREE.Vector3(0, 0, 0);
-    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone());
+    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), sfx);
     mouse.speed = spec.mouseSpeed;
     mice.push(mouse);
   }
@@ -180,7 +180,7 @@ function loop() {
     const d = m.mesh.position.distanceTo(cat.mesh.position);
     if (d < 0.6) {
       m.kill();
-      sfx.boop();
+      sfx.mouseDie();
       caught++;
       remaining--;
       UI.setCaught(caught);

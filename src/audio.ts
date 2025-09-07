@@ -2,6 +2,7 @@ export class Sound {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
   private unlocked = false
+  private buffers: Map<string, AudioBuffer> = new Map()
 
   private ensure() {
     if (!this.ctx) {
@@ -41,5 +42,46 @@ export class Sound {
     o.start(t0)
     o.stop(t0 + 0.14)
   }
-}
 
+  private async loadBuffer(url: string): Promise<AudioBuffer | null> {
+    this.ensure()
+    if (!this.ctx) return null
+    if (this.buffers.has(url)) return this.buffers.get(url) as AudioBuffer
+    try {
+      const res = await fetch(url)
+      const arr = await res.arrayBuffer()
+      const buf = await this.ctx.decodeAudioData(arr)
+      this.buffers.set(url, buf)
+      return buf
+    } catch {
+      return null
+    }
+  }
+
+  async playSample(relPath: string, volume = 1, rate = 1) {
+    this.ensure()
+    if (!this.ctx || !this.master) return
+    if (!this.unlocked) return
+    const url = new URL(relPath, import.meta.url).toString()
+    const buf = await this.loadBuffer(url)
+    if (!buf) return
+    const t0 = this.ctx.currentTime
+    const src = this.ctx.createBufferSource()
+    src.buffer = buf
+    src.playbackRate.value = rate
+    const g = this.ctx.createGain()
+    g.gain.value = volume
+    src.connect(g)
+    g.connect(this.master)
+    src.start(t0)
+  }
+
+  // Convenience wrappers
+  mouseSqueek() {
+    // Slightly quieter to avoid being harsh
+    this.playSample("../sfx/mouse-squeek.wav", 0.35, 1)
+  }
+  mouseDie() {
+    this.playSample("../sfx/mouse-die.wav", 0.5, 1)
+  }
+}

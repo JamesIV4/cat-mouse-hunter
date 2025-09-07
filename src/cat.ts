@@ -132,8 +132,8 @@ export class CatController {
     const right = this.input.right - this.input.left;
     const moving = Math.abs(forward) + Math.abs(right) > 0;
 
-    const speedBase = 10.0;
-    const speedRun = 13.5;
+    const speedBase = 12.0;
+    const speedRun = speedBase * 1.75;
     const speedSneak = 2.0;
     const speed = this.input.sneak
       ? speedSneak
@@ -143,8 +143,24 @@ export class CatController {
 
     if (this.onGround) {
       if (this.input.jump) {
-        this.body.velocity.y = 7; // Jump strength
+        // Set upward velocity and preserve horizontal momentum; set minimum horizontal based on launch angle
+        const Vy = 7; // Jump strength (vertical)
+        this.body.velocity.y = Vy;
         this.state = "Jump";
+        // Compute current horizontal speed and set a minimum based on angle from vertical: 0..45 deg
+        const vx = this.body.velocity.x;
+        const vz = this.body.velocity.z;
+        const hSpeed = Math.hypot(vx, vz);
+        const t = Math.min(1, hSpeed / speedRun);
+        const alpha = ((45 * Math.PI) / 180) * t; // 0 at standstill, 45deg at run speed
+        const hMin = Vy * Math.tan(alpha); // minimum horizontal to achieve angle
+        if (hSpeed > 0.0001 && hSpeed < hMin) {
+          const hx = vx / hSpeed;
+          const hz = vz / hSpeed;
+          const add = hMin - hSpeed;
+          this.body.velocity.x = vx + hx * add;
+          this.body.velocity.z = vz + hz * add;
+        }
       } else if (moving) {
         this.state = this.input.sneak
           ? "Sneak"
@@ -210,19 +226,26 @@ export class CatController {
         .multiplyScalar(forward)
         .add(rightDir.multiplyScalar(right))
         .normalize();
-      const desiredVel = new CANNON.Vec3(
-        dir.x * speed,
-        this.body.velocity.y,
-        dir.z * speed
-      );
-      // Accelerate toward desired horizontal velocity
+
       const v = this.body.velocity;
-      v.x += (desiredVel.x - v.x) * 0.35;
-      v.z += (desiredVel.z - v.z) * 0.35;
+      if (this.onGround) {
+        // Grounded: steer toward a target speed
+        const desiredVel = new CANNON.Vec3(dir.x * speed, v.y, dir.z * speed);
+        const accel = 0.35;
+        v.x += (desiredVel.x - v.x) * accel;
+        v.z += (desiredVel.z - v.z) * accel;
+      } else {
+        // Airborne: small additive nudge in input direction; scale by dt so it's framerate-independent
+        const airNudgeAccel = 0.5; // per-second acceleration scale
+        v.x += dir.x * speed * airNudgeAccel * dt;
+        v.z += dir.z * speed * airNudgeAccel * dt;
+      }
     } else {
-      // slow down when no input
-      this.body.velocity.x *= 0.9;
-      this.body.velocity.z *= 0.9;
+      // Apply ground friction only when grounded and idle
+      if (this.onGround) {
+        this.body.velocity.x *= 0.9;
+        this.body.velocity.z *= 0.9;
+      }
     }
 
     // Update visual
@@ -237,7 +260,17 @@ export class CatController {
       let delta = targetRot - currentY;
       while (delta > Math.PI) delta -= Math.PI * 2;
       while (delta < -Math.PI) delta += Math.PI * 2;
-      this.mesh.rotation.y = currentY + delta * 0.2;
+      let step: number;
+      if (this.onGround) {
+        // Grounded: normal snappy turn toward direction
+        step = delta * 0.2;
+      } else {
+        // Airborne: limit max turn rate so the cat can't whip around mid-air
+        const maxTurnRate = 4.0; // radians per second (~230 deg/s)
+        const maxStep = maxTurnRate * dt;
+        step = clamp(delta, -maxStep, maxStep);
+      }
+      this.mesh.rotation.y = currentY + step;
     }
 
     // Camera follow
