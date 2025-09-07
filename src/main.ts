@@ -5,6 +5,7 @@ import { Mouse } from "./mouse";
 import { Level, LevelSpec } from "./level";
 import { Input } from "./input";
 import { UI } from "./ui";
+import { Sound } from "./audio";
 
 const app = document.getElementById("app")!;
 
@@ -41,6 +42,7 @@ scene.add(sun);
 const world = createWorld();
 
 const input = new Input(document);
+const sfx = new Sound();
 
 // Pointer lock for seamless mouse look
 const canvas = renderer.domElement;
@@ -50,6 +52,7 @@ canvas.addEventListener('click', () => {
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
   }
+  sfx.resume();
 });
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
@@ -75,12 +78,16 @@ let currentLevel = 1;
 
 function specForLevel(n: number): LevelSpec {
   const mouseCount = 4 + Math.floor(n * 1.5);
+  // Scale house size with level
+  const houseHalfSize = 10 + Math.min(20, Math.floor(n * 2)); // grows up to +20
+  const sizeScale = (houseHalfSize / 10);
   return {
     miceRequired: Math.min(mouseCount, 4 + n),
     mouseCount,
     mouseSpeed: 2.5 + n * 0.2,
-    roomCount: Math.min(6, 3 + Math.floor(n / 2)),
-    clutterCount: 20 + n * 4,
+    roomCount: Math.min(14, 3 + Math.floor(n * 0.8) + Math.floor((sizeScale - 1) * 3)),
+    clutterCount: Math.floor((20 + n * 5) * sizeScale * sizeScale),
+    houseHalfSize,
   };
 }
 
@@ -168,6 +175,7 @@ function loop() {
     const d = m.mesh.position.distanceTo(cat.mesh.position);
     if (d < 0.6) {
       m.kill();
+      sfx.boop();
       caught++;
       remaining--;
       UI.setCaught(caught);
@@ -185,7 +193,7 @@ function loop() {
   if (input.restart) {
     createLevel(currentLevel);
   }
-  if (input.next && caught >= required) {
+  if ((input.next || input.consumePadAccept()) && caught >= required) {
     currentLevel++;
     createLevel(currentLevel);
   }

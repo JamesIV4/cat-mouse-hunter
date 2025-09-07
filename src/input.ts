@@ -13,6 +13,7 @@ export class Input {
   gpPrevButtons: boolean[] = [];
   padRestart = false;
   padNext = false;
+  padAccept = false; // A button edge
 
   constructor(private dom: HTMLElement | Document = document) {
     this.bind();
@@ -170,6 +171,8 @@ export class Input {
     // Restart/Next via Back/Start edge
     this.padRestart = this.justPressed(8);
     this.padNext = this.justPressed(9);
+    // Accept/Advance via A edge
+    this.padAccept = this.justPressed(0);
 
     // Save prev buttons
     this.gpPrevButtons = (gp.buttons || []).map(b => (typeof b === 'object' ? (b as any).pressed : !!b));
@@ -199,5 +202,11 @@ export class Input {
     const pressedNow = (typeof b === 'object') ? (b as any).pressed : !!b;
     const prev = this.gpPrevButtons[index] || false;
     return pressedNow && !prev;
+  }
+
+  consumePadAccept() {
+    const v = this.padAccept;
+    this.padAccept = false;
+    return v;
   }
 }

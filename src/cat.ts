@@ -56,7 +56,7 @@ export class CatController {
     const earGeo = new THREE.ConeGeometry(0.12, 0.2, 8);
     const ear1 = new THREE.Mesh(earGeo, mat);
     ear1.position.set(-0.12, 1.45, 0.35);
-    ear1.rotation.x = Math.PI;
+    ear1.rotation.x = 0;
     const ear2 = ear1.clone();
     ear2.position.x = 0.12;
     g.add(ear1, ear2);
@@ -65,7 +65,7 @@ export class CatController {
       mat
     );
     tail.position.set(0, 1.0, -0.4);
-    tail.rotation.x = Math.PI / 4;
+    tail.rotation.x = -Math.PI / 4;
     g.add(tail);
     this.mesh = g;
     scene.add(this.mesh);
