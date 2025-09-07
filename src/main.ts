@@ -167,7 +167,9 @@ function loop() {
   if (bannerVisible && input.padAccept) {
     input.suppressPadJumpOnce();
   }
-  level.update(dt);
+  // Provide player position so level can pause far dynamic bodies
+  const playerPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
+  level.update(dt, playerPos);
   cat.update(
     dt,
     camera,
@@ -176,7 +178,7 @@ function loop() {
     level.meshes
   );
 
-  const catPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
+  const catPos = playerPos.clone();
   for (const m of mice) m.update(dt, catPos);
 
   // catch detection: touching a mouse despawns and scores

@@ -226,7 +226,8 @@ export class Mouse {
 
     // If near a mouse hole, bias direction to point to it instead of random jitters
     if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
-      const seekRadius = 6; // increased radius to seek holes
+      // Double seek radius when pursued to prefer holes sooner
+      const seekRadius = pursued ? 12 : 6;
       const myPos = new THREE.Vector3(
         this.body.position.x,
         0.5,

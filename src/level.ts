@@ -20,6 +20,8 @@ export class Level {
   bodies: CANNON.Body[] = [];
   spawnPoints: THREE.Vector3[] = [];
   dynamicPairs: { mesh: THREE.Object3D; body: CANNON.Body }[] = [];
+  // Track which dynamic bodies are paused (slept) due to distance from player
+  private pausedBodies: Set<CANNON.Body> = new Set();
   // Gameplay registry of mouse holes (position and inward normal)
   mouseHoles: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }[] = [];
 
@@ -49,8 +51,34 @@ export class Level {
     this.meshes.push(floorMesh);
   }
 
-  update(dt: number) {
+  update(dt: number, playerPos?: THREE.Vector3) {
+    // Conservative pause radius (horizontal). Use hysteresis to avoid thrashing.
+    const baseRadius = 12; // meters; conservative, user can increase later
+    const hysteresis = 2; // enter/exit buffer
+    const sleepRadius = baseRadius + hysteresis;
+    const wakeRadius = Math.max(0, baseRadius - hysteresis);
+
     for (const p of this.dynamicPairs) {
+      // Optional distance-based pausing of dynamic clutter
+      if (playerPos) {
+        const dx = p.body.position.x - playerPos.x;
+        const dz = p.body.position.z - playerPos.z;
+        const distXZ = Math.hypot(dx, dz);
+        const isPaused = this.pausedBodies.has(p.body);
+        if (!isPaused && distXZ > sleepRadius) {
+          // Pause: zero velocities and put body to sleep
+          p.body.velocity.set(0, 0, 0);
+          p.body.angularVelocity.set(0, 0, 0);
+          (p.body as any).sleep && (p.body as any).sleep();
+          this.pausedBodies.add(p.body);
+        } else if (isPaused && distXZ < wakeRadius) {
+          // Resume: wake up body
+          (p.body as any).wakeUp && (p.body as any).wakeUp();
+          this.pausedBodies.delete(p.body);
+        }
+      }
+
+      // Sync mesh from body (sleeping bodies won't move, but syncing is harmless)
       const bp = p.body.position as any;
       const bq = p.body.quaternion as any;
       p.mesh.position.set(bp.x, bp.y, bp.z);
@@ -1527,7 +1555,53 @@ export class Level {
         }
         return true;
       };
+      const before = this.mouseHoles.length;
       this.mouseHoles = this.mouseHoles.filter(notBehindCouch);
+      const removedCount = Math.max(0, before - this.mouseHoles.length);
+
+      // If any holes were removed due to couches, try to add replacements
+      if (removedCount > 0) {
+        const candidates: { room: THREE.Box3; a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+        for (let i = 0; i < rooms.length; i++) {
+          const r = rooms[i];
+          const min = r.min, max = r.max;
+          const corners = [
+            new THREE.Vector3(min.x, 0, min.z),
+            new THREE.Vector3(max.x, 0, min.z),
+            new THREE.Vector3(max.x, 0, max.z),
+            new THREE.Vector3(min.x, 0, max.z),
+          ];
+          const edges = [
+            [corners[0], corners[1]],
+            [corners[1], corners[2]],
+            [corners[2], corners[3]],
+            [corners[3], corners[0]],
+          ] as const;
+          for (const [a, b] of edges) {
+            const onNorth = Math.abs(a.z - houseMax.z) < 1e-3 && Math.abs(b.z - houseMax.z) < 1e-3;
+            const onSouth = Math.abs(a.z - houseMin.z) < 1e-3 && Math.abs(b.z - houseMin.z) < 1e-3;
+            const onEast = Math.abs(a.x - houseMax.x) < 1e-3 && Math.abs(b.x - houseMax.x) < 1e-3;
+            const onWest = Math.abs(a.x - houseMin.x) < 1e-3 && Math.abs(b.x - houseMin.x) < 1e-3;
+            const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
+            if (!isInteriorEdge) continue;
+            candidates.push({ room: r, a, b });
+          }
+        }
+        let toAdd = removedCount;
+        let guard = candidates.length * 2 + 20;
+        while (toAdd > 0 && guard-- > 0 && candidates.length > 0) {
+          const idx = Math.floor(Math.random() * candidates.length);
+          const c = candidates[idx];
+          addMouseHoleOnEdge(c.room, c.a, c.b);
+          // After each attempted placement, recheck if it survived couch filter
+          const afterTry = this.mouseHoles.filter(notBehindCouch);
+          const grew = afterTry.length > this.mouseHoles.length ? 1 : 0;
+          this.mouseHoles = afterTry;
+          if (grew > 0) toAdd -= grew;
+        }
+        // Final safety recheck
+        this.mouseHoles = this.mouseHoles.filter(notBehindCouch);
+      }
     }
 
     // Remove spawn points that ended up under couches
