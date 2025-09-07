@@ -88,7 +88,15 @@
         color: #9ad1ff;
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-B6hxOTpO.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-BFVQlvMz.js"></script>
   </head>
   <body>
     <div id="app"></div>
@@ -112,5 +120,7 @@
     <div class="lockHint" id="lockHint">
       Click the game to enable mouse look
     </div>
+    <!-- Import map to source three.js from CDN for ESM imports -->
+
   </body>
 </html>
