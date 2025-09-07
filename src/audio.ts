@@ -85,15 +85,15 @@ export class Sound {
   // Convenience wrappers
   mouseSqueek() {
     // Slightly quieter to avoid being harsh
-    this.playSample("../sfx/mouse-squeek.wav", 0.35, 1);
+    this.playSample("../sfx/mouse-squeek.wav", 0.7, 1);
   }
   mouseDie() {
-    this.playSample("../sfx/mouse-die.wav", 0.5, 1);
+    this.playSample("../sfx/mouse-die.wav", 1, 1);
   }
 
   // New: cat sounds
   catTrill() {
-    this.playSample("../sfx/cat-trill.wav", 0.08, 1);
+    this.playSample("../sfx/cat-trill.wav", 0.16, 1);
   }
 
   async startCatPurr(volume = 0.45) {
