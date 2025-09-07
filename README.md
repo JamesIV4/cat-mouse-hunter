@@ -1,5 +1,7 @@
 # Cat & Mouse Hunter
 
+## Play game: https://jamesiv4.github.io/cat-mouse-hunter/
+
 A procedural 3D browser game where you play as a cat contracted to clear mice from randomly generated houses.
 Built with **Three.js** and **cannon-es**, bundled with **Vite**.
 
