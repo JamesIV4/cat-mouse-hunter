@@ -1,3 +1,9 @@
+// Pre-resolve SFX asset URLs so Vite includes them in the build
+const SFX_MOUSE_SQUEEK = new URL("../sfx/mouse-squeek.wav", import.meta.url).toString();
+const SFX_MOUSE_DIE = new URL("../sfx/mouse-die.wav", import.meta.url).toString();
+const SFX_CAT_TRILL = new URL("../sfx/cat-trill.wav", import.meta.url).toString();
+const SFX_CAT_PURR = new URL("../sfx/cat-pur.wav", import.meta.url).toString();
+
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -85,15 +91,15 @@ export class Sound {
   // Convenience wrappers
   mouseSqueek() {
     // Slightly quieter to avoid being harsh
-    this.playSample("../sfx/mouse-squeek.wav", 0.7, 1);
+    this.playSample(SFX_MOUSE_SQUEEK, 0.7, 1);
   }
   mouseDie() {
-    this.playSample("../sfx/mouse-die.wav", 1, 1);
+    this.playSample(SFX_MOUSE_DIE, 1, 1);
   }
 
   // New: cat sounds
   catTrill() {
-    this.playSample("../sfx/cat-trill.wav", 0.16, 1);
+    this.playSample(SFX_CAT_TRILL, 0.16, 1);
   }
 
   async startCatPurr(volume = 0.45) {
@@ -105,8 +111,7 @@ export class Sound {
       this.loopSrc.gain.gain.value = volume;
       return;
     }
-    const url = new URL("../sfx/cat-pur.wav", import.meta.url).toString();
-    const buf = await this.loadBuffer(url);
+    const buf = await this.loadBuffer(SFX_CAT_PURR);
     if (!buf) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
