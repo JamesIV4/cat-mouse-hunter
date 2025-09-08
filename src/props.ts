@@ -4,28 +4,6 @@ import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 
-// Map all files under models/ to built asset URLs so they are available in production builds.
-// This fixes missing props on real devices where dynamic string URLs are not bundled by Vite.
-// Keys are paths like "../models/..." relative to this file.
-const ASSET_URLS = (import.meta as any).glob
-  ? ((import.meta as any).glob("../models/**/*", { eager: true, query: "?url", import: "default" }) as Record<string, string>)
-  : ({} as any);
-export function resolveAssetUrl(path: string): string {
-  // Absolute or full URL: return as-is
-  if (/^https?:\/\//i.test(path) || path.startsWith("/")) return path;
-  // Try exact key first (e.g., "../models/foo/bar.fbx")
-  if (ASSET_URLS && ASSET_URLS[path]) return ASSET_URLS[path];
-  // Common variant: provided as "models/foo/bar.fbx"
-  const v1 = path.startsWith("models/") ? `../${path}` : path;
-  if (ASSET_URLS && ASSET_URLS[v1]) return ASSET_URLS[v1];
-  // Fallback: resolve relative to this module (works in dev)
-  try {
-    return new URL(path, import.meta.url).toString();
-  } catch {
-    return path;
-  }
-}
-
 // Collider debug registry and controls
 let colliderDebugEnabled = false;
 const colliderDebugObjects: THREE.Object3D[] = [];
@@ -54,7 +32,7 @@ export function loadFBXCached(modelUrl: string): Promise<THREE.Object3D> {
   const key = modelUrl;
   if (!fbxCache.has(key)) {
     const loader = new FBXLoader();
-    const abs = resolveAssetUrl(modelUrl);
+    const abs = new URL(modelUrl, import.meta.url).toString();
     const p = new Promise<THREE.Object3D>((resolve, reject) => {
       loader.load(
         abs,
@@ -74,7 +52,7 @@ export function loadOBJCached(modelUrl: string): Promise<THREE.Object3D> {
   const key = modelUrl;
   if (!objCache.has(key)) {
     const loader = new OBJLoader();
-    const abs = resolveAssetUrl(modelUrl);
+    const abs = new URL(modelUrl, import.meta.url).toString();
     const p = new Promise<THREE.Object3D>((resolve, reject) => {
       loader.load(
         abs,
@@ -706,7 +684,7 @@ const textureCache = new Map<string, Promise<THREE.Texture>>();
 export function loadTextureCached(url: string): Promise<THREE.Texture> {
   const key = url;
   if (!textureCache.has(key)) {
-    const abs = resolveAssetUrl(url);
+    const abs = new URL(url, import.meta.url).toString();
     const p = new Promise<THREE.Texture>((resolve, reject) => {
       const tl = new THREE.TextureLoader();
       tl.load(

@@ -1023,7 +1023,7 @@ export class Level {
     for (let i = 0; i < rooms.length; i++) {
       if (this.roomLabels[i] === "Bathroom") {
         placePropAgainstWallOnce(this.world, this.scene, rooms[i], roomOpenings[i], {
-          modelUrl: "../models/toilet/toilet.fbx",
+          modelUrl: new URL("../models/toilet/toilet.fbx", import.meta.url).toString(),
           targetHeight: 2,
           inwardOffset: 1.08,
           yawOffset: -90,
@@ -1048,7 +1048,7 @@ export class Level {
         });
         // Also place a sink (OBJ) in the bathroom
         placePropAgainstWallOnce(this.world, this.scene, rooms[i], roomOpenings[i], {
-          modelUrl: "../models/sink-bathroom/sink-bathroom.obj",
+          modelUrl: new URL("../models/sink-bathroom/sink-bathroom.obj", import.meta.url).toString(),
           targetHeight: 3,
           inwardOffset: 0.9,
           yawOffset: 0,
@@ -1101,8 +1101,8 @@ export class Level {
 
       for (let n = 0; n < couches; n++) {
         placePropAgainstWallOnce(this.world, this.scene, r, roomOpenings[ri], {
-          modelUrl: "../models/couch/couch.fbx",
-          textureUrl: "../models/couch/couch.jpg",
+          modelUrl: new URL("../models/couch/couch.fbx", import.meta.url).toString(),
+          textureUrl: new URL("../models/couch/couch.jpg", import.meta.url).toString(),
           textureBrightness: 3,
           targetHeight: 2,
           inwardOffset: 1.35,
