@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CANNON } from "./physics";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 
 const fbxCache = new Map<string, Promise<THREE.Object3D>>();
 const objCache = new Map<string, Promise<THREE.Object3D>>();
@@ -101,7 +102,7 @@ export type PlacePropOpts = {
    */
   textureBrightness?: number;
   /**
-   * Multiplier (0..1] that shrinks the collider half-extents computed from the model's bounding box. Default 0.9.
+   * Multiplier (0..1] that shrinks the generated collider hull toward its centroid. Default 0.9.
    */
   shrink?: number;
   /**
@@ -133,6 +134,107 @@ export type PlacePropOpts = {
    */
   onPlaced?: (mesh: THREE.Object3D, body: CANNON.Body | null) => void;
 };
+
+// Build a low-poly convex hull collider for a placed model instance.
+// - Collects mesh vertices in world space
+// - Downsamples and quantizes to reduce point count
+// - Computes a convex hull (ConvexGeometry)
+// - Converts hull triangles to a CANNON.ConvexPolyhedron
+// - Returns a static body positioned at the collider centroid
+function buildConvexHullStaticBody(
+  world: CANNON.World,
+  inst: THREE.Object3D,
+  tag?: string,
+  shrink = 0.9,
+  maxPoints = 300
+): CANNON.Body | null {
+  inst.updateMatrixWorld(true);
+  // Gather points from all meshes
+  const pts: THREE.Vector3[] = [];
+  const tmp = new THREE.Vector3();
+  const pushVertex = (x: number, y: number, z: number, obj: THREE.Object3D) => {
+    tmp.set(x, y, z).applyMatrix4((obj as any).matrixWorld);
+    pts.push(tmp.clone());
+  };
+  inst.traverse((o: any) => {
+    if (!o || !o.isMesh || !o.geometry) return;
+    const g: THREE.BufferGeometry = o.geometry;
+    const pos = g.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (!pos) return;
+    const arr = pos.array as ArrayLike<number>;
+    // Sample positions with stride to limit points
+    const stride = Math.max(1, Math.floor((arr.length / 3) / maxPoints));
+    for (let i = 0; i < pos.count; i += stride) {
+      const ix = i * 3;
+      pushVertex(arr[ix], arr[ix + 1], arr[ix + 2], o);
+    }
+  });
+  if (pts.length < 4) return null; // not enough for a hull
+
+  // Quantize to collapse near-duplicates
+  const quant = 1e-2;
+  const map = new Map<string, THREE.Vector3>();
+  for (const p of pts) {
+    const k = `${Math.round(p.x / quant)},${Math.round(p.y / quant)},${Math.round(p.z / quant)}`;
+    if (!map.has(k)) map.set(k, p);
+  }
+  const uniq = Array.from(map.values());
+  if (uniq.length < 4) return null;
+
+  // Compute convex hull geometry
+  let hullGeom: THREE.BufferGeometry;
+  try {
+    const hull = new ConvexGeometry(uniq);
+    hullGeom = hull as unknown as THREE.BufferGeometry;
+  } catch {
+    return null;
+  }
+  // Extract vertices from hull geometry
+  const hPos = hullGeom.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!hPos) return null;
+
+  // Build unique vertex list and triangular faces
+  const verts: THREE.Vector3[] = [];
+  const vMap = new Map<string, number>();
+  const faces: number[][] = [];
+  const key = (x: number, y: number, z: number) => `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+  for (let i = 0; i < hPos.count; i += 3) {
+    const triIdx: number[] = [];
+    for (let k = 0; k < 3; k++) {
+      const ix = (i + k) * 3;
+      const vx = (hPos.array as any)[ix];
+      const vy = (hPos.array as any)[ix + 1];
+      const vz = (hPos.array as any)[ix + 2];
+      const kk = key(vx, vy, vz);
+      let vi = vMap.get(kk);
+      if (vi === undefined) {
+        vi = verts.length;
+        verts.push(new THREE.Vector3(vx, vy, vz));
+        vMap.set(kk, vi);
+      }
+      triIdx.push(vi);
+    }
+    // Ensure triangle winding is consistent; Cannon expects outward winding but hull triangles should already be consistent
+    faces.push(triIdx);
+  }
+  if (verts.length < 4 || faces.length < 4) return null;
+
+  // Compute centroid and optionally shrink toward it to reduce overhangs
+  const centroid = verts.reduce((acc, v) => acc.add(v), new THREE.Vector3()).multiplyScalar(1 / verts.length);
+  const shrinkClamped = Math.max(0.5, Math.min(1, shrink || 1));
+  const cannonVerts = verts.map((v) => {
+    const dv = v.clone().sub(centroid).multiplyScalar(shrinkClamped);
+    return new CANNON.Vec3(dv.x, dv.y, dv.z);
+  });
+
+  const shape = new (CANNON as any).ConvexPolyhedron({ vertices: cannonVerts, faces });
+  const body = new CANNON.Body({ mass: 0 });
+  body.addShape(shape);
+  body.position.set(centroid.x, centroid.y, centroid.z);
+  if (tag) (body as any)[`is${tag[0].toUpperCase()}${tag.slice(1)}`] = true;
+  world.addBody(body);
+  return body;
+}
 
 // Picks a point along a room wall (avoiding door openings) and places a single static model there.
 /**
@@ -268,22 +370,7 @@ export function placePropAgainstWallOnce(
         scene.add(inst);
         let body: CANNON.Body | null = null;
         if (opts.collidable !== false) {
-          // Build collider (optional shrink)
-          inst.updateMatrixWorld(true);
-          const wbb = new THREE.Box3().setFromObject(inst);
-          const size = new THREE.Vector3();
-          wbb.getSize(size);
-          const center = wbb.getCenter(new THREE.Vector3());
-          const shrink = opts.shrink ?? 0.9;
-          const hx = Math.max(0.05, (size.x * shrink) / 2);
-          const hy = Math.max(0.3, (size.y * shrink) / 2);
-          const hz = Math.max(0.05, (size.z * shrink) / 2);
-          const shape = new CANNON.Box(new CANNON.Vec3(hx, hy, hz));
-          body = new CANNON.Body({ mass: 0, shape });
-          body.position.set(center.x, center.y, center.z);
-          body.quaternion.setFromEuler(0, yaw, 0);
-          if (opts.tag) (body as any)[`is${opts.tag[0].toUpperCase()}${opts.tag.slice(1)}`] = true;
-          world.addBody(body);
+          body = buildConvexHullStaticBody(world, inst, opts.tag, opts.shrink ?? 0.9);
         }
         if (opts.onPlaced) opts.onPlaced(inst, body);
         return;
@@ -385,21 +472,7 @@ export function placePropAt(
     // Collider
     let body: CANNON.Body | null = null;
     if (opts.collidable !== false) {
-      inst.updateMatrixWorld(true);
-      const wbb = new THREE.Box3().setFromObject(inst);
-      const size = new THREE.Vector3();
-      wbb.getSize(size);
-      const center = wbb.getCenter(new THREE.Vector3());
-      const shrink = opts.shrink ?? 0.9;
-      const hx = Math.max(0.05, (size.x * shrink) / 2);
-      const hy = Math.max(0.1, (size.y * shrink) / 2);
-      const hz = Math.max(0.05, (size.z * shrink) / 2);
-      const shape = new CANNON.Box(new CANNON.Vec3(hx, hy, hz));
-      body = new CANNON.Body({ mass: 0, shape });
-      body.position.set(center.x, center.y, center.z);
-      body.quaternion.setFromEuler(0, yaw, 0);
-      if (opts.tag) (body as any)[`is${opts.tag[0].toUpperCase()}${opts.tag.slice(1)}`] = true;
-      world.addBody(body);
+      body = buildConvexHullStaticBody(world, inst, opts.tag, opts.shrink ?? 0.9);
     }
     if (opts.onPlaced) opts.onPlaced(inst, body);
   });
