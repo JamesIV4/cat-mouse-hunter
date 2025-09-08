@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CANNON } from "./physics";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { placePropAgainstWallOnce } from "./props";
 import { randRange, choice } from "./utils";
 
 export type LevelSpec = {
@@ -857,131 +857,21 @@ export class Level {
       return mesh;
     };
 
-    // Load and place one toilet in each Bathroom, aligned to a wall and facing inward
-    let toiletModelPromise: Promise<THREE.Object3D> | null = null;
-    const loadToiletModel = (): Promise<THREE.Object3D> => {
-      if (!toiletModelPromise) {
-        const loader = new FBXLoader();
-        toiletModelPromise = new Promise((resolve, reject) => {
-          const url = new URL("../models/toilet/toilet.fbx", import.meta.url).toString();
-          loader.load(
-            url,
-            (obj) => {
-              // Normalize to target height
-              const preBox = new THREE.Box3().setFromObject(obj);
-              const preSize = new THREE.Vector3();
-              preBox.getSize(preSize);
-              const targetHeight = 2;
-              const factor = preSize.y > 0 ? targetHeight / preSize.y : 1;
-              obj.scale.setScalar(factor);
-              resolve(obj);
-            },
-            undefined,
-            (err) => reject(err)
-          );
-        });
-      }
-      return toiletModelPromise;
-    };
-    const placeToiletInBathroom = (room: THREE.Box3, openings: THREE.Vector3[]) => {
-      const min = room.min,
-        max = room.max;
-      const corners = [
-        new THREE.Vector3(min.x, 0, min.z),
-        new THREE.Vector3(max.x, 0, min.z),
-        new THREE.Vector3(max.x, 0, max.z),
-        new THREE.Vector3(min.x, 0, max.z),
-      ];
-      const edges = [
-        [corners[0], corners[1]], // south
-        [corners[1], corners[2]], // east
-        [corners[2], corners[3]], // north
-        [corners[3], corners[0]], // west
-      ] as const;
-      const roomCenter = new THREE.Vector3((min.x + max.x) / 2, 0, (min.z + max.z) / 2);
-      const doorHalf = 1.2;
-      const widthExtra = 0.5;
-      const epsEdge = 1e-3;
-      // Try up to a few edges to find a valid spot
-      const startEdge = Math.floor(Math.random() * 4);
-      for (let k = 0; k < 4; k++) {
-        const [a, b] = edges[(startEdge + k) % 4];
-        const dir = new THREE.Vector3().subVectors(b, a);
-        const len = dir.length();
-        if (len < 0.8) continue;
-        const tangent = dir.clone().normalize();
-        const n = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
-        // Choose inward normal
-        const mid = a.clone().addScaledVector(tangent, len / 2);
-        const toCenter = new THREE.Vector3().subVectors(roomCenter, mid).setY(0).normalize();
-        const inward = n.dot(toCenter) > 0 ? n : n.clone().multiplyScalar(-1);
-        // Determine openings that lie on this wall and mark unusable spans
-        const wallIsNorth = Math.abs(a.z - max.z) < epsEdge && Math.abs(b.z - max.z) < epsEdge;
-        const wallIsSouth = Math.abs(a.z - min.z) < epsEdge && Math.abs(b.z - min.z) < epsEdge;
-        const wallIsEast = Math.abs(a.x - max.x) < epsEdge && Math.abs(b.x - max.x) < epsEdge;
-        const wallIsWest = Math.abs(a.x - min.x) < epsEdge && Math.abs(b.x - min.x) < epsEdge;
-        const badSpans: [number, number][] = [];
-        for (const o of openings) {
-          if (wallIsNorth && Math.abs(o.z - max.z) < epsEdge) {
-            const t = (o.x - a.x) / (b.x - a.x);
-            badSpans.push([
-              Math.max(0, t - (doorHalf + widthExtra) / len),
-              Math.min(1, t + (doorHalf + widthExtra) / len),
-            ]);
-          }
-          if (wallIsSouth && Math.abs(o.z - min.z) < epsEdge) {
-            const t = (o.x - a.x) / (b.x - a.x);
-            badSpans.push([
-              Math.max(0, t - (doorHalf + widthExtra) / len),
-              Math.min(1, t + (doorHalf + widthExtra) / len),
-            ]);
-          }
-          if (wallIsEast && Math.abs(o.x - max.x) < epsEdge) {
-            const t = (o.z - a.z) / (b.z - a.z);
-            badSpans.push([
-              Math.max(0, t - (doorHalf + widthExtra) / len),
-              Math.min(1, t + (doorHalf + widthExtra) / len),
-            ]);
-          }
-          if (wallIsWest && Math.abs(o.x - min.x) < epsEdge) {
-            const t = (o.z - a.z) / (b.z - a.z);
-            badSpans.push([
-              Math.max(0, t - (doorHalf + widthExtra) / len),
-              Math.min(1, t + (doorHalf + widthExtra) / len),
-            ]);
-          }
-        }
-        const okT = (t: number) => badSpans.every(([lo, hi]) => !(t >= lo && t <= hi));
-        // Try several candidate positions along the wall
-        for (let tries = 0; tries < 8; tries++) {
-          const t = 0.15 + Math.random() * 0.7;
-          if (!okT(t)) continue;
-          const pos = a.clone().addScaledVector(tangent, t * len);
-          // Offset slightly toward the room interior
-          const inwardOffset = 0.08;
-          pos.add(inward.clone().multiplyScalar(inwardOffset));
-          // Load/clone model and place
-          loadToiletModel().then((model) => {
-            const inst = model.clone(true);
-            // Align feet to floor
-            const box = new THREE.Box3().setFromObject(inst);
-            const minY = box.min.y;
-            inst.position.copy(pos);
-            inst.position.y -= minY; // ground it
-            // Rotate to face inward
-            inst.rotation.y = Math.atan2(inward.x, inward.z);
-            // Add to scene and registry
-            this.scene.add(inst);
-            this.meshes.push(inst);
-          });
-          return; // only one per bathroom
-        }
-      }
-    };
-    // Place toilets for each Bathroom
+    // Place toilets for each Bathroom via re-usable prop utility
     for (let i = 0; i < rooms.length; i++) {
       if (this.roomLabels[i] === "Bathroom") {
-        placeToiletInBathroom(rooms[i], roomOpenings[i]);
+        placePropAgainstWallOnce(this.world, this.scene, rooms[i], roomOpenings[i], {
+          modelUrl: "../models/toilet/toilet.fbx",
+          targetHeight: 2,
+          inwardOffset: 1.08,
+          yawOffset: -Math.PI / 2,
+          shrink: 0.9,
+          tag: "toilet",
+          onPlaced: (mesh, body) => {
+            this.meshes.push(mesh);
+            if (body) this.bodies.push(body);
+          },
+        });
       }
     }
 
