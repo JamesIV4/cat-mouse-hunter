@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CANNON } from "./physics";
-import { placePropAgainstWallOnce } from "./props";
+import { placePropAgainstWallOnce, registerColliderDebugObject } from "./props";
 import { randRange, choice } from "./utils";
 
 export type LevelSpec = {
@@ -33,6 +33,8 @@ export class Level {
     inward: THREE.Vector3;
     room: THREE.Box3;
   }[] = [];
+  // Doorway colliders per room (2D rectangles in XZ) to keep placement clear
+  doorwayRectsByRoom: { minX: number; maxX: number; minZ: number; maxZ: number }[][] = [];
 
   constructor(
     public world: CANNON.World,
@@ -467,10 +469,83 @@ export class Level {
 
     // Classify rooms by type based on size/shape/adjacency and exterior location
     this.classifyRooms(rooms, roomOpenings, houseMin, houseMax);
+    // Build doorway colliders (extend into each room from each doorway edge)
+    this.doorwayRectsByRoom = rooms.map(() => []);
+    {
+      const doorHalf = 1.2; // keep in sync with walls
+      const widthExtra = 0.4;
+      const depthClear = 0.8;
+      const epsEdge = 1e-3;
+      for (let i = 0; i < rooms.length; i++) {
+        const r = rooms[i];
+        const rects = this.doorwayRectsByRoom[i];
+        for (const o of roomOpenings[i]) {
+          // North wall (z ~ r.max.z): corridor extends inward along -Z
+          if (Math.abs(o.z - r.max.z) < epsEdge) {
+            rects.push({
+              minX: o.x - (doorHalf + widthExtra),
+              maxX: o.x + (doorHalf + widthExtra),
+              minZ: r.max.z - depthClear,
+              maxZ: r.max.z,
+            });
+          }
+          // South wall (z ~ r.min.z): corridor extends inward along +Z
+          if (Math.abs(o.z - r.min.z) < epsEdge) {
+            rects.push({
+              minX: o.x - (doorHalf + widthExtra),
+              maxX: o.x + (doorHalf + widthExtra),
+              minZ: r.min.z,
+              maxZ: r.min.z + depthClear,
+            });
+          }
+          // East wall (x ~ r.max.x): corridor extends inward along -X
+          if (Math.abs(o.x - r.max.x) < epsEdge) {
+            rects.push({
+              minX: r.max.x - depthClear,
+              maxX: r.max.x,
+              minZ: o.z - (doorHalf + widthExtra),
+              maxZ: o.z + (doorHalf + widthExtra),
+            });
+          }
+          // West wall (x ~ r.min.x): corridor extends inward along +X
+          if (Math.abs(o.x - r.min.x) < epsEdge) {
+            rects.push({
+              minX: r.min.x,
+              maxX: r.min.x + depthClear,
+              minZ: o.z - (doorHalf + widthExtra),
+              maxZ: o.z + (doorHalf + widthExtra),
+            });
+          }
+        }
+      }
+    }
+    // Optional debug wires for doorway rectangles (placement-only colliders)
+    try {
+      for (let i = 0; i < rooms.length; i++) {
+        for (const d of this.doorwayRectsByRoom[i]) {
+          const w = Math.max(0.01, d.maxX - d.minX);
+          const h = 0.02;
+          const dz = Math.max(0.01, d.maxZ - d.minZ);
+          const cx = (d.minX + d.maxX) / 2;
+          const cz = (d.minZ + d.maxZ) / 2;
+          const geo = new THREE.BoxGeometry(w, h, dz);
+          const wire = new THREE.LineSegments(
+            new THREE.WireframeGeometry(geo),
+            new THREE.LineBasicMaterial({ color: 0xffaa66, depthTest: true, depthWrite: false })
+          );
+          wire.position.set(cx, h / 2 + 0.002, cz);
+          registerColliderDebugObject(wire);
+          this.scene.add(wire);
+          this.meshes.push(wire);
+        }
+      }
+    } catch {}
     // Draw all rooms with their assigned openings
     for (let i = 0; i < rooms.length; i++) {
       drawRoomWalls(rooms[i], roomOpenings[i]);
     }
+
+    // Doorway jamb cylinder colliders removed (keeping doorway rectangles and F2 debug elsewhere)
 
     // Filter spawn points: avoid placing spawns inside doorway corridors
     if (this.spawnPoints.length > 0) {
@@ -867,6 +942,18 @@ export class Level {
           yawOffset: -90,
           shrink: 0.9,
           tag: "toilet",
+          canPlace: ({ position, halfSize }) => {
+            const cand = {
+              minX: position.x - halfSize.x,
+              maxX: position.x + halfSize.x,
+              minZ: position.z - halfSize.z,
+              maxZ: position.z + halfSize.z,
+            };
+            for (const d of this.doorwayRectsByRoom[i] || []) {
+              if (!(cand.maxX < d.minX || cand.minX > d.maxX || cand.maxZ < d.minZ || cand.minZ > d.maxZ)) return false;
+            }
+            return true;
+          },
           onPlaced: (mesh, body) => {
             this.meshes.push(mesh);
             if (body) this.bodies.push(body);
@@ -880,6 +967,18 @@ export class Level {
           yawOffset: 0,
           shrink: 0.9,
           tag: "sink",
+          canPlace: ({ position, halfSize }) => {
+            const cand = {
+              minX: position.x - halfSize.x,
+              maxX: position.x + halfSize.x,
+              minZ: position.z - halfSize.z,
+              maxZ: position.z + halfSize.z,
+            };
+            for (const d of this.doorwayRectsByRoom[i] || []) {
+              if (!(cand.maxX < d.minX || cand.minX > d.maxX || cand.maxZ < d.minZ || cand.minZ > d.maxZ)) return false;
+            }
+            return true;
+          },
           onPlaced: (mesh, body) => {
             this.meshes.push(mesh);
             if (body) this.bodies.push(body);
@@ -894,23 +993,110 @@ export class Level {
       .filter(({ label }) => label === "Living Room" || label === "Family Room")
       .map(({ i }) => i);
     for (const ri of couchRoomIdxs) {
-      placePropAgainstWallOnce(this.world, this.scene, rooms[ri], roomOpenings[ri], {
-        modelUrl: "../models/couch/couch.fbx",
-        textureUrl: "../models/couch/couch.jpg",
-        textureBrightness: 3,
-        targetHeight: 2,
-        inwardOffset: 1.35,
-        doorHalf: 1.2,
-        doorMargin: 0.6,
-        // Use simple convex hull for couches
-        colliderStrategy: "hull",
-        shrink: 0.9,
-        tag: "couch",
-        onPlaced: (mesh, body) => {
-          this.meshes.push(mesh);
-          if (body) this.bodies.push(body);
-        },
-      });
+      const r = rooms[ri];
+      const size = new THREE.Vector3().subVectors(r.max, r.min);
+      const area = Math.max(0.001, size.x * size.z);
+      // Normalize area to [0,1] based on small/large heuristics
+      const a0 = 35; // small room area threshold
+      const a1 = 95; // large room area threshold
+      const t = THREE.MathUtils.clamp((area - a0) / Math.max(1, a1 - a0), 0, 1);
+      // Start with 1 couch; add up to 2 more with probability weighted by room size
+      let couches = 1;
+      if (Math.random() < t) couches++;
+      if (Math.random() < t * 0.6) couches++;
+      couches = Math.min(3, couches);
+
+      // Track already placed couch AABBs in this room to prevent overlaps
+      const placedAabbs: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
+      const aabbOverlaps = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, b: { minX: number; maxX: number; minZ: number; maxZ: number }) => {
+        return !(a.maxX < b.minX || a.minX > b.maxX || a.maxZ < b.minZ || a.minZ > b.maxZ);
+      };
+
+      for (let n = 0; n < couches; n++) {
+        placePropAgainstWallOnce(this.world, this.scene, r, roomOpenings[ri], {
+          modelUrl: "../models/couch/couch.fbx",
+          textureUrl: "../models/couch/couch.jpg",
+          textureBrightness: 3,
+          targetHeight: 2,
+          inwardOffset: 1.35,
+          doorHalf: 1.2,
+          doorMargin: 0.6,
+          // Use simple convex hull for couches
+          colliderStrategy: "hull",
+          shrink: 0.9,
+          tag: "couch",
+          // Reject placement candidates that overlap couches or collide with walls
+          canPlace: ({ position, yawRad, halfSize }) => {
+            // AABB for quick overlap tests (axis-aligned; yaw is multiples of 90deg)
+            const candidate = {
+              minX: position.x - halfSize.x,
+              maxX: position.x + halfSize.x,
+              minZ: position.z - halfSize.z,
+              maxZ: position.z + halfSize.z,
+            };
+            // 1) No overlap with already placed couches
+            for (const p of placedAabbs) if (aabbOverlaps(candidate, p)) return false;
+            // 2) No overlap with doorway colliders in this room
+            for (const d of this.doorwayRectsByRoom[ri] || []) {
+              if (!(candidate.maxX < d.minX || candidate.minX > d.maxX || candidate.maxZ < d.minZ || candidate.minZ > d.maxZ)) {
+                return false;
+              }
+            }
+
+            // 3) Do not collide with walls: keep AABB inside room interior and keep back against wall interior face
+            const wallT = 0.35; // must match wall thickness in generation
+            const eps = 0.02;
+            // Keep entire AABB within interior bounds
+            if (
+              candidate.minX < r.min.x + wallT / 2 + eps ||
+              candidate.maxX > r.max.x - wallT / 2 - eps ||
+              candidate.minZ < r.min.z + wallT / 2 + eps ||
+              candidate.maxZ > r.max.z - wallT / 2 - eps
+            )
+              return false;
+            // Ensure the back of the couch is not embedded in the wall
+            const F = new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)); // inward-facing
+            const back = position.clone().addScaledVector(F, -halfSize.z);
+            // Determine wall by F axis
+            if (Math.abs(F.z) >= Math.abs(F.x)) {
+              // Facing along Z (north/south)
+              if (F.z < 0) {
+                // North wall behind; interior plane at r.max.z - wallT/2
+                const interior = r.max.z - wallT / 2;
+                if (back.z > interior - eps) return false;
+              } else {
+                // South wall
+                const interior = r.min.z + wallT / 2;
+                if (back.z < interior + eps) return false;
+              }
+            } else {
+              // Facing along X (east/west)
+              if (F.x < 0) {
+                // East wall
+                const interior = r.max.x - wallT / 2;
+                if (back.x > interior - eps) return false;
+              } else {
+                // West wall
+                const interior = r.min.x + wallT / 2;
+                if (back.x < interior + eps) return false;
+              }
+            }
+            return true;
+          },
+          onPlaced: (mesh, body) => {
+            // Only record real placements that produced a mesh with geometry
+            if (mesh && (mesh as any).isObject3D) {
+              // Compute world AABB and store for subsequent overlap checks
+              const bb = new THREE.Box3().setFromObject(mesh);
+              if (isFinite(bb.min.x) && isFinite(bb.max.x) && isFinite(bb.min.z) && isFinite(bb.max.z)) {
+                placedAabbs.push({ minX: bb.min.x, maxX: bb.max.x, minZ: bb.min.z, maxZ: bb.max.z });
+              }
+              this.meshes.push(mesh);
+            }
+            if (body) this.bodies.push(body);
+          },
+        });
+      }
     }
 
     // Clutter: dynamic physics objects biased to kid-friendly rooms

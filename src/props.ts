@@ -14,7 +14,7 @@ export function setColliderDebugVisible(visible: boolean) {
 export function toggleColliderDebug() {
   setColliderDebugVisible(!colliderDebugEnabled);
 }
-function registerColliderDebugObject(obj: THREE.Object3D) {
+export function registerColliderDebugObject(obj: THREE.Object3D) {
   obj.visible = colliderDebugEnabled;
   colliderDebugObjects.push(obj);
 }
@@ -139,11 +139,6 @@ export type PlacePropOpts = {
   /** Collider strategy per object: 'compound' (default) or 'hull' (simple). */
   colliderStrategy?: "compound" | "hull";
   /**
-   * Collider strategy. 'compound' builds convex hulls per child mesh (with a simple clustering fallback),
-   * 'hull' builds a single convex hull. Default 'compound'.
-   */
-  colliderStrategy?: "compound" | "hull";
-  /**
    * Optional tag that will set a boolean flag like `is<Tag>` on the created physics body (e.g., `tag: "toilet"` sets `isToilet`).
    */
   tag?: string;
@@ -171,6 +166,15 @@ export type PlacePropOpts = {
    * Callback invoked after placement with the created mesh and (optional) physics body.
    */
   onPlaced?: (mesh: THREE.Object3D, body: CANNON.Body | null) => void;
+  /**
+   * Optional acceptance callback to validate a candidate placement before it is finalized.
+   * Return false to reject and try another spot.
+   */
+  canPlace?: (info: {
+    position: THREE.Vector3; // world position of model origin after placement
+    yawRad: number; // world yaw in radians
+    halfSize: { x: number; z: number }; // approximate XZ half-size from the placed bounding box
+  }) => boolean;
 };
 
 // Build a low-poly convex hull collider for a placed model instance.
@@ -594,13 +598,27 @@ export function placePropAgainstWallOnce(
             }
           }
         });
+        // Position and orientation
         const box = new THREE.Box3().setFromObject(inst);
         const minY = box.min.y;
         inst.position.copy(pos);
         inst.position.y -= minY;
-        const yaw =
-          Math.atan2(inward.x, inward.z) + THREE.MathUtils.degToRad(opts.yawOffset ?? 0);
+        const yaw = Math.atan2(inward.x, inward.z) + THREE.MathUtils.degToRad(opts.yawOffset ?? 0);
         inst.rotation.y = yaw;
+
+        // Compute XZ footprint half-size and consult canPlace before adding to scene/world
+        const wbb = new THREE.Box3().setFromObject(inst);
+        const sz = new THREE.Vector3();
+        wbb.getSize(sz);
+        const halfXZ = { x: Math.max(0.01, sz.x / 2), z: Math.max(0.01, sz.z / 2) };
+        if (typeof opts.canPlace === "function") {
+          const ok = opts.canPlace({ position: inst.position.clone(), yawRad: yaw, halfSize: halfXZ });
+          if (!ok) {
+            // reject this candidate; try another
+            continue;
+          }
+        }
+
         scene.add(inst);
         let body: CANNON.Body | null = null;
         if (opts.collidable !== false) {
