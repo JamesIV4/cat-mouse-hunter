@@ -508,6 +508,9 @@ export class Mouse {
     this.respawnAttempts = 0;
     this.movementBaseline = exitPos.clone();
     this.stagnantTimer = 0;
+    // Per-mouse temporary seek-ban: do not seek the same hole we just exited for 15s
+    const idx = this.holes.indexOf(dest as any);
+    if (idx >= 0) this.bannedHoles.set(idx, 15.0);
   }
 
   // Choose a hole that is not banned for spawns; avoid a specific id if provided
