@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { CANNON } from "./physics";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 
 const fbxCache = new Map<string, Promise<THREE.Object3D>>();
+const objCache = new Map<string, Promise<THREE.Object3D>>();
 
 /**
  * Load an FBX once and cache by URL. No scaling is applied in the cache; scaling happens per-placement.
@@ -30,9 +32,36 @@ export function loadFBXCached(modelUrl: string): Promise<THREE.Object3D> {
   return fbxCache.get(key)!;
 }
 
+export function loadOBJCached(modelUrl: string): Promise<THREE.Object3D> {
+  const key = modelUrl;
+  if (!objCache.has(key)) {
+    const loader = new OBJLoader();
+    const abs = new URL(modelUrl, import.meta.url).toString();
+    const p = new Promise<THREE.Object3D>((resolve, reject) => {
+      loader.load(
+        abs,
+        (obj) => resolve(obj),
+        undefined,
+        (err) => reject(err)
+      );
+    });
+    objCache.set(key, p);
+  }
+  return objCache.get(key)!;
+}
+
+/** Load a model by extension (FBX or OBJ) and cache results by URL. */
+export function loadModelCached(modelUrl: string): Promise<THREE.Object3D> {
+  const lower = modelUrl.toLowerCase();
+  if (lower.endsWith(".fbx")) return loadFBXCached(modelUrl);
+  if (lower.endsWith(".obj")) return loadOBJCached(modelUrl);
+  // Fallback: try FBX first
+  return loadFBXCached(modelUrl);
+}
+
 export type PlacePropOpts = {
   /**
-   * Relative or absolute URL to the FBX model (resolved using import.meta.url).
+   * Relative or absolute URL to the model (FBX or OBJ, resolved using import.meta.url).
    */
   modelUrl: string;
   /**
@@ -49,7 +78,7 @@ export type PlacePropOpts = {
    */
   inwardOffset?: number;
   /**
-   * Extra yaw (radians) added to the inward-facing orientation. Positive rotates CCW when viewed from above.
+   * Extra yaw (degrees) added to the inward-facing orientation. Positive rotates CCW when viewed from above.
    */
   yawOffset?: number;
   /**
@@ -128,7 +157,7 @@ export function placePropAgainstWallOnce(
   const epsEdge = 1e-3;
   const startEdge = Math.floor(Math.random() * 4);
 
-  loadFBXCached(opts.modelUrl).then((base) => {
+  loadModelCached(opts.modelUrl).then((base) => {
     for (let k = 0; k < 4; k++) {
       const [a, b] = edges[(startEdge + k) % 4];
       const dir = new THREE.Vector3().subVectors(b, a);
@@ -197,7 +226,8 @@ export function placePropAgainstWallOnce(
         const minY = box.min.y;
         inst.position.copy(pos);
         inst.position.y -= minY;
-        const yaw = Math.atan2(inward.x, inward.z) + (opts.yawOffset ?? 0);
+        const yaw =
+          Math.atan2(inward.x, inward.z) + THREE.MathUtils.degToRad(opts.yawOffset ?? 0);
         inst.rotation.y = yaw;
         scene.add(inst);
         let body: CANNON.Body | null = null;

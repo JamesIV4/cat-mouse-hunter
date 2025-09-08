@@ -329,10 +329,7 @@ export class Level {
         edgeOpenings.sort((u, v) => u.t - v.t);
         const filtered: EdgeOpening[] = [];
         for (const e of edgeOpenings) {
-          if (
-            filtered.length === 0 ||
-            Math.abs(e.t - filtered[filtered.length - 1].t) * len >= doorHalf * 2 + 0.6
-          ) {
+          if (filtered.length === 0 || Math.abs(e.t - filtered[filtered.length - 1].t) * len >= doorHalf * 2 + 0.6) {
             filtered.push(e);
           }
         }
@@ -378,9 +375,7 @@ export class Level {
             this.scene.add(lintelMesh);
             this.meshes.push(lintelMesh);
 
-            const lintelShape = new CANNON.Box(
-              new CANNON.Vec3(wallThickness / 2, lintelHeight / 2, doorWidth / 2)
-            );
+            const lintelShape = new CANNON.Box(new CANNON.Vec3(wallThickness / 2, lintelHeight / 2, doorWidth / 2));
             const lintelBody = new CANNON.Body({ mass: 0, shape: lintelShape });
             lintelBody.position.set(lintelMesh.position.x, lintelMesh.position.y, lintelMesh.position.z);
             lintelBody.quaternion.setFromEuler(0, angle, 0);
@@ -914,9 +909,22 @@ export class Level {
           modelUrl: "../models/toilet/toilet.fbx",
           targetHeight: 2,
           inwardOffset: 1.08,
-          yawOffset: -Math.PI / 2,
+          yawOffset: -90,
           shrink: 0.9,
           tag: "toilet",
+          onPlaced: (mesh, body) => {
+            this.meshes.push(mesh);
+            if (body) this.bodies.push(body);
+          },
+        });
+        // Also place a sink (OBJ) in the bathroom
+        placePropAgainstWallOnce(this.world, this.scene, rooms[i], roomOpenings[i], {
+          modelUrl: "../models/sink-bathroom/sink-bathroom.obj",
+          targetHeight: 3,
+          inwardOffset: 0.9,
+          yawOffset: 0,
+          shrink: 0.9,
+          tag: "sink",
           onPlaced: (mesh, body) => {
             this.meshes.push(mesh);
             if (body) this.bodies.push(body);
@@ -1471,16 +1479,16 @@ export class Level {
       "Living Room": 1.0,
       "Family Room": 1.0,
       "Master Bedroom": 0.9,
-      "Bedroom": 0.8,
+      Bedroom: 0.8,
       "Spare Room": 0.5,
       "Dining Room": 0.2,
       // Not likely play areas
-      "Hallway": 0,
-      "Kitchen": 0,
-      "Bathroom": 0,
-      "Office": 0,
-      "Laundry": 0,
-      "Closet": 0,
+      Hallway: 0,
+      Kitchen: 0,
+      Bathroom: 0,
+      Office: 0,
+      Laundry: 0,
+      Closet: 0,
     };
     const eligible: { room: THREE.Box3; weight: number }[] = [];
     for (let i = 0; i < rooms.length; i++) {
