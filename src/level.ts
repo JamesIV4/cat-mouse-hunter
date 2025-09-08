@@ -282,7 +282,7 @@ export class Level {
       this.meshes.push(m);
     };
 
-    // Helper to draw box edges as walls but leave one door opening per adjacency
+    // Helper to draw box edges as walls but leave one or more door openings per edge
     const drawRoomWalls = (box: THREE.Box3, openings: THREE.Vector3[]) => {
       const min = box.min,
         max = box.max;
@@ -306,12 +306,14 @@ export class Level {
         const onEast = Math.abs(a.x - houseMax.x) < 1e-3 && Math.abs(b.x - houseMax.x) < 1e-3;
         const onWest = Math.abs(a.x - houseMin.x) < 1e-3 && Math.abs(b.x - houseMin.x) < 1e-3;
         const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
-        // Find an opening that lies along this edge segment (within tolerance)
+        // Gather all openings that lie along this edge segment (within tolerance)
         const edgeDir = new THREE.Vector3().subVectors(b, a);
         const len = edgeDir.length();
         const dir = edgeDir.clone().normalize();
         const tol = 0.3; // perpendicular tolerance to consider on-edge
-        let chosenCenter: THREE.Vector3 | null = null;
+        const doorHalf = 1.2; // must match door carving elsewhere
+        type EdgeOpening = { t: number; center: THREE.Vector3 };
+        const edgeOpenings: EdgeOpening[] = [];
         for (const o of openings) {
           const ap = new THREE.Vector3().subVectors(o, a);
           const t = ap.dot(dir) / len; // param along edge
@@ -320,58 +322,76 @@ export class Level {
           const closest = a.clone().addScaledVector(dir, t * len);
           const perp = o.clone().sub(closest);
           if (Math.abs(perp.x) + Math.abs(perp.z) < tol) {
-            // approx distance in XZ
-            chosenCenter = closest;
-            break;
+            edgeOpenings.push({ t, center: closest });
           }
         }
-        if (chosenCenter) {
-          // split wall into two segments around a door
-          const doorHalf = 1.2; // 2x wider (~2.4m)
-          const leftEnd = chosenCenter.clone().addScaledVector(dir, -doorHalf);
-          const rightStart = chosenCenter.clone().addScaledVector(dir, doorHalf);
-          // Clamp to segment
+        // Sort and de-duplicate openings that are too close
+        edgeOpenings.sort((u, v) => u.t - v.t);
+        const filtered: EdgeOpening[] = [];
+        for (const e of edgeOpenings) {
+          if (
+            filtered.length === 0 ||
+            Math.abs(e.t - filtered[filtered.length - 1].t) * len >= doorHalf * 2 + 0.6
+          ) {
+            filtered.push(e);
+          }
+        }
+
+        if (filtered.length > 0) {
+          // Build wall segments around each doorway and add lintels
           const clampPoint = (p: THREE.Vector3) =>
             new THREE.Vector3(
               THREE.MathUtils.clamp(p.x, Math.min(a.x, b.x), Math.max(a.x, b.x)),
               p.y,
               THREE.MathUtils.clamp(p.z, Math.min(a.z, b.z), Math.max(a.z, b.z))
             );
-          const seg1a = a.clone(),
-            seg1b = clampPoint(leftEnd);
-          const seg2a = clampPoint(rightStart),
-            seg2b = b.clone();
-          addWall(seg1a, seg1b, wallHeight);
-          addWall(seg2a, seg2b, wallHeight);
-          if (isInteriorEdge) {
-            addBaseboards(seg1a, seg1b, true);
-            addBaseboards(seg2a, seg2b, true);
-          } else {
-            addBaseboardInner(seg1a, seg1b);
-            addBaseboardInner(seg2a, seg2b);
+
+          // Helper to add a wall subsegment with baseboards
+          const addSeg = (p1: THREE.Vector3, p2: THREE.Vector3) => {
+            if (p1.distanceToSquared(p2) < 1e-6) return;
+            addWall(p1, p2, wallHeight);
+            if (isInteriorEdge) addBaseboards(p1, p2, true);
+            else addBaseboardInner(p1, p2);
+          };
+
+          // Segments before, between, and after openings
+          let cursor = a.clone();
+          for (let k = 0; k < filtered.length; k++) {
+            const c = filtered[k].center;
+            const leftEnd = c.clone().addScaledVector(dir, -doorHalf);
+            const rightStart = c.clone().addScaledVector(dir, doorHalf);
+            const seg1b = clampPoint(leftEnd);
+            addSeg(cursor, seg1b);
+
+            // Lintel above this opening
+            const doorWidth = doorHalf * 2;
+            const lintelHeight = wallHeight / 3;
+            const openingHeight = wallHeight - lintelHeight; // ~2/3 of wall height for opening
+            const angle = Math.atan2(dir.x, dir.z);
+            const lintelGeo = new THREE.BoxGeometry(wallThickness, lintelHeight, doorWidth);
+            const lintelMesh = new THREE.Mesh(lintelGeo, wallMat);
+            lintelMesh.position.copy(c);
+            lintelMesh.position.y = openingHeight + lintelHeight / 2;
+            lintelMesh.rotation.y = angle;
+            lintelMesh.castShadow = true;
+            lintelMesh.receiveShadow = true;
+            this.scene.add(lintelMesh);
+            this.meshes.push(lintelMesh);
+
+            const lintelShape = new CANNON.Box(
+              new CANNON.Vec3(wallThickness / 2, lintelHeight / 2, doorWidth / 2)
+            );
+            const lintelBody = new CANNON.Body({ mass: 0, shape: lintelShape });
+            lintelBody.position.set(lintelMesh.position.x, lintelMesh.position.y, lintelMesh.position.z);
+            lintelBody.quaternion.setFromEuler(0, angle, 0);
+            this.world.addBody(lintelBody);
+            this.bodies.push(lintelBody);
+
+            // Advance cursor to right edge of doorway
+            cursor = clampPoint(rightStart);
           }
-
-          // Lintel over doorway: fill top 1/3 of wall height above the opening
-          const doorWidth = doorHalf * 2;
-          const lintelHeight = wallHeight / 3;
-          const openingHeight = wallHeight - lintelHeight; // ~2/3 of wall height for opening
-          const angle = Math.atan2(dir.x, dir.z);
-          const lintelGeo = new THREE.BoxGeometry(wallThickness, lintelHeight, doorWidth);
-          const lintelMesh = new THREE.Mesh(lintelGeo, wallMat);
-          lintelMesh.position.copy(chosenCenter);
-          lintelMesh.position.y = openingHeight + lintelHeight / 2;
-          lintelMesh.rotation.y = angle;
-          lintelMesh.castShadow = true;
-          lintelMesh.receiveShadow = true;
-          this.scene.add(lintelMesh);
-          this.meshes.push(lintelMesh);
-
-          const lintelShape = new CANNON.Box(new CANNON.Vec3(wallThickness / 2, lintelHeight / 2, doorWidth / 2));
-          const lintelBody = new CANNON.Body({ mass: 0, shape: lintelShape });
-          lintelBody.position.set(lintelMesh.position.x, lintelMesh.position.y, lintelMesh.position.z);
-          lintelBody.quaternion.setFromEuler(0, angle, 0);
-          this.world.addBody(lintelBody);
-          this.bodies.push(lintelBody);
+          // Final segment after last door
+          addSeg(cursor, b.clone());
         } else {
           addWall(a, b, wallHeight);
           if (isInteriorEdge) addBaseboards(a, b, true);
@@ -380,7 +400,7 @@ export class Level {
       }
     };
 
-    // Compute adjacency once and assign a doorway to each touching pair
+    // Compute adjacency once and assign one or more doorway centers to each touching pair
     const roomOpenings: THREE.Vector3[][] = rooms.map(() => []);
     const eps = 1e-3;
     for (let i = 0; i < rooms.length; i++) {
@@ -390,41 +410,95 @@ export class Level {
         // vertical shared wall (x constant), overlap along z
         const overlapZ = Math.min(A.max.z, B.max.z) - Math.max(A.min.z, B.min.z);
         if (overlapZ > 0) {
-          if (Math.abs(A.max.x - B.min.x) < eps) {
-            const z = (Math.max(A.min.z, B.min.z) + Math.min(A.max.z, B.max.z)) / 2;
-            const x = A.max.x;
-            const p = new THREE.Vector3(x, 0, z);
-            roomOpenings[i].push(p);
-            roomOpenings[j].push(p);
-            continue;
-          }
-          if (Math.abs(A.min.x - B.max.x) < eps) {
-            const z = (Math.max(A.min.z, B.min.z) + Math.min(A.max.z, B.max.z)) / 2;
-            const x = A.min.x;
-            const p = new THREE.Vector3(x, 0, z);
-            roomOpenings[i].push(p);
-            roomOpenings[j].push(p);
-            continue;
+          const doorHalf = 1.2;
+          const edgeMargin = doorHalf + 0.4; // keep away from wall corners
+          const minZ = Math.max(A.min.z, B.min.z) + edgeMargin;
+          const maxZ = Math.min(A.max.z, B.max.z) - edgeMargin;
+          if (maxZ > minZ) {
+            const addVertical = (x: number) => {
+              // First doorway at random along overlap
+              const z1 = randRange(minZ, maxZ);
+              const p1 = new THREE.Vector3(x, 0, z1);
+              roomOpenings[i].push(p1);
+              roomOpenings[j].push(p1);
+              // Chance for a second doorway, ensure spacing and bounds
+              if (Math.random() < 0.35) {
+                const minGap = doorHalf * 2 + 0.8;
+                // Try left or right side regions where there is room
+                const leftMax = z1 - minGap;
+                const rightMin = z1 + minGap;
+                const canLeft = leftMax > minZ;
+                const canRight = rightMin < maxZ;
+                if (canLeft || canRight) {
+                  let z2: number;
+                  if (canLeft && canRight) {
+                    // Randomly choose a side
+                    if (Math.random() < 0.5) z2 = randRange(minZ, leftMax);
+                    else z2 = randRange(rightMin, maxZ);
+                  } else if (canLeft) {
+                    z2 = randRange(minZ, leftMax);
+                  } else {
+                    z2 = randRange(rightMin, maxZ);
+                  }
+                  const p2 = new THREE.Vector3(x, 0, z2);
+                  roomOpenings[i].push(p2);
+                  roomOpenings[j].push(p2);
+                }
+              }
+            };
+            if (Math.abs(A.max.x - B.min.x) < eps) {
+              addVertical(A.max.x);
+              continue;
+            }
+            if (Math.abs(A.min.x - B.max.x) < eps) {
+              addVertical(A.min.x);
+              continue;
+            }
           }
         }
         // horizontal shared wall (z constant), overlap along x
         const overlapX = Math.min(A.max.x, B.max.x) - Math.max(A.min.x, B.min.x);
         if (overlapX > 0) {
-          if (Math.abs(A.max.z - B.min.z) < eps) {
-            const x = (Math.max(A.min.x, B.min.x) + Math.min(A.max.x, B.max.x)) / 2;
-            const z = A.max.z;
-            const p = new THREE.Vector3(x, 0, z);
-            roomOpenings[i].push(p);
-            roomOpenings[j].push(p);
-            continue;
-          }
-          if (Math.abs(A.min.z - B.max.z) < eps) {
-            const x = (Math.max(A.min.x, B.min.x) + Math.min(A.max.x, B.max.x)) / 2;
-            const z = A.min.z;
-            const p = new THREE.Vector3(x, 0, z);
-            roomOpenings[i].push(p);
-            roomOpenings[j].push(p);
-            continue;
+          const doorHalf = 1.2;
+          const edgeMargin = doorHalf + 0.4;
+          const minX = Math.max(A.min.x, B.min.x) + edgeMargin;
+          const maxX = Math.min(A.max.x, B.max.x) - edgeMargin;
+          if (maxX > minX) {
+            const addHorizontal = (z: number) => {
+              const x1 = randRange(minX, maxX);
+              const p1 = new THREE.Vector3(x1, 0, z);
+              roomOpenings[i].push(p1);
+              roomOpenings[j].push(p1);
+              if (Math.random() < 0.35) {
+                const minGap = doorHalf * 2 + 0.8;
+                const leftMax = x1 - minGap;
+                const rightMin = x1 + minGap;
+                const canLeft = leftMax > minX;
+                const canRight = rightMin < maxX;
+                if (canLeft || canRight) {
+                  let x2: number;
+                  if (canLeft && canRight) {
+                    if (Math.random() < 0.5) x2 = randRange(minX, leftMax);
+                    else x2 = randRange(rightMin, maxX);
+                  } else if (canLeft) {
+                    x2 = randRange(minX, leftMax);
+                  } else {
+                    x2 = randRange(rightMin, maxX);
+                  }
+                  const p2 = new THREE.Vector3(x2, 0, z);
+                  roomOpenings[i].push(p2);
+                  roomOpenings[j].push(p2);
+                }
+              }
+            };
+            if (Math.abs(A.max.z - B.min.z) < eps) {
+              addHorizontal(A.max.z);
+              continue;
+            }
+            if (Math.abs(A.min.z - B.max.z) < eps) {
+              addHorizontal(A.min.z);
+              continue;
+            }
           }
         }
       }
@@ -433,7 +507,12 @@ export class Level {
     const backIdx = rooms.findIndex((r) => Math.abs(r.max.z - houseMax.z) < eps);
     if (backIdx >= 0) {
       const r = rooms[backIdx];
-      roomOpenings[backIdx].push(new THREE.Vector3((r.min.x + r.max.x) / 2, 0, r.max.z));
+      const doorHalf = 1.2;
+      const edgeMargin = doorHalf + 0.4;
+      const minX = r.min.x + edgeMargin;
+      const maxX = r.max.x - edgeMargin;
+      const x = minX < maxX ? randRange(minX, maxX) : (r.min.x + r.max.x) / 2;
+      roomOpenings[backIdx].push(new THREE.Vector3(x, 0, r.max.z));
     }
 
     // Classify rooms by type based on size/shape/adjacency and exterior location
@@ -1431,9 +1510,52 @@ export class Level {
       });
     }
 
-    // Clutter: dynamic physics objects randomly around rooms (not on furniture)
+    // Clutter: dynamic physics objects biased to kid-friendly rooms
+    // Build weighted room list based on semantic labels
+    const kidWeights: Record<string, number> = {
+      "Living Room": 1.0,
+      "Family Room": 1.0,
+      "Master Bedroom": 0.9,
+      "Bedroom": 0.8,
+      "Spare Room": 0.5,
+      "Dining Room": 0.2,
+      // Not likely play areas
+      "Hallway": 0,
+      "Kitchen": 0,
+      "Bathroom": 0,
+      "Office": 0,
+      "Laundry": 0,
+      "Closet": 0,
+    };
+    const eligible: { room: THREE.Box3; weight: number }[] = [];
+    for (let i = 0; i < rooms.length; i++) {
+      const label = this.roomLabels[i] || "";
+      const baseW = kidWeights[label] ?? 0;
+      if (baseW <= 0) continue;
+      // Mildly scale by room area to spread clutter sensibly
+      const sz = new THREE.Vector3().subVectors(rooms[i].max, rooms[i].min);
+      const areaScale = THREE.MathUtils.clamp((sz.x * sz.z) / 16, 0.6, 1.6);
+      eligible.push({ room: rooms[i], weight: baseW * areaScale });
+    }
+
+    // Precompute cumulative weights for sampling
+    const cum: number[] = [];
+    let totalW = 0;
+    for (const e of eligible) {
+      totalW += e.weight;
+      cum.push(totalW);
+    }
+
+    const pickEligible = () => {
+      if (eligible.length === 0 || totalW <= 0) return null as THREE.Box3 | null;
+      const r = Math.random() * totalW;
+      const idx = cum.findIndex((v) => r < v);
+      return eligible[Math.max(0, idx)].room;
+    };
+
     for (let i = 0; i < spec.clutterCount; i++) {
-      const r = choice(rooms);
+      const r = pickEligible();
+      if (!r) break; // no eligible rooms
       const margin = 0.6;
       const px = randRange(r.min.x + margin, r.max.x - margin);
       const pz = randRange(r.min.z + margin, r.max.z - margin);
