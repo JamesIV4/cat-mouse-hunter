@@ -421,7 +421,7 @@ function loadRatModel(): Promise<THREE.Object3D> {
   if (!mouseModelPromise) {
     const loader = new FBXLoader();
     mouseModelPromise = new Promise((resolve, reject) => {
-      const url = new URL("../models/mouse/mouse-exported.fbx", import.meta.url).toString();
+      const url = resolveAssetUrl("../models/mouse/mouse-exported.fbx");
       loader.load(
         url,
         (obj) => {
@@ -446,7 +446,7 @@ let mouseTexturePromise: Promise<THREE.Texture | null> | null = null;
 function loadMouseTexture(): Promise<THREE.Texture | null> {
   if (!mouseTexturePromise) {
     mouseTexturePromise = new Promise((resolve) => {
-      const texUrl = new URL("../models/mouse/mouse.png", import.meta.url).toString();
+      const texUrl = resolveAssetUrl("../models/mouse/mouse.png");
       const tl = new THREE.TextureLoader();
       tl.load(
         texUrl,
@@ -463,3 +463,4 @@ function loadMouseTexture(): Promise<THREE.Texture | null> {
   }
   return mouseTexturePromise;
 }
+import { resolveAssetUrl } from "./props";

@@ -7,9 +7,10 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 // Map all files under models/ to built asset URLs so they are available in production builds.
 // This fixes missing props on real devices where dynamic string URLs are not bundled by Vite.
 // Keys are paths like "../models/..." relative to this file.
-const ASSET_URLS = (import.meta as any).glob ? (import.meta as any).glob("../models/**/*", { as: "url", eager: true }) as Record<string, string> : {} as any;
-
-function resolveAssetUrl(path: string): string {
+const ASSET_URLS = (import.meta as any).glob
+  ? ((import.meta as any).glob("../models/**/*", { eager: true, query: "?url", import: "default" }) as Record<string, string>)
+  : ({} as any);
+export function resolveAssetUrl(path: string): string {
   // Absolute or full URL: return as-is
   if (/^https?:\/\//i.test(path) || path.startsWith("/")) return path;
   // Try exact key first (e.g., "../models/foo/bar.fbx")

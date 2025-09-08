@@ -386,7 +386,7 @@ function loadCatModel(): Promise<THREE.Object3D> {
   if (!catModelPromise) {
     const loader = new FBXLoader();
     catModelPromise = new Promise((resolve, reject) => {
-      const url = new URL("../models/cat/cat.fbx", import.meta.url).toString();
+      const url = resolveAssetUrl("../models/cat/cat.fbx");
       loader.load(
         url,
         (obj) => {
@@ -412,7 +412,7 @@ let catTexturePromise: Promise<THREE.Texture | null> | null = null;
 function loadCatTexture(): Promise<THREE.Texture | null> {
   if (!catTexturePromise) {
     catTexturePromise = new Promise((resolve) => {
-      const texUrl = new URL("../models/cat/cat.jpg", import.meta.url).toString();
+      const texUrl = resolveAssetUrl("../models/cat/cat.jpg");
       const tl = new THREE.TextureLoader();
       tl.load(
         texUrl,
@@ -429,3 +429,4 @@ function loadCatTexture(): Promise<THREE.Texture | null> {
   }
   return catTexturePromise;
 }
+import { resolveAssetUrl } from "./props";
