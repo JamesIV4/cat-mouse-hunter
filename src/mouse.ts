@@ -28,6 +28,7 @@ export class Mouse {
     position: THREE.Vector3;
     inward: THREE.Vector3;
     room: THREE.Box3;
+    id?: number;
   }[];
   // In-hole travel delay and destination scheduling
   private inHoleTimer = 0;
@@ -36,6 +37,11 @@ export class Mouse {
     inward: THREE.Vector3;
     room: THREE.Box3;
   } | null = null;
+  // Hole seeking ban list: hole index -> seconds remaining
+  private bannedHoles: Map<number, number> = new Map();
+  // Track currently sought hole and how long we've been seeking it
+  private seekingHoleIdx: number | null = null;
+  private seekingHoleTimer = 0;
   // Per-pursuit toggle: whether to seek holes during the current chase
   private seekHoleThisPursuit: boolean | null = null;
   // Erratic steering when pursued
@@ -44,6 +50,17 @@ export class Mouse {
   private wasPursued = false;
   // Light wander jitter during normal movement
   private wanderJitterTimer = 0;
+  // Rolling stuck monitoring (anytime): if we don't move a small distance for 7s
+  private stagnantTimer = 0; // seconds with movement below threshold
+  private movementBaseline: THREE.Vector3 | null = null;
+  private lastExitHoleId: number | null = null;
+  private respawnAttempts = 0;
+
+  // Shared per-level ban list for hole spawns
+  static bannedSpawnHoleIds: Set<number> = new Set();
+  static resetHoleBans() {
+    Mouse.bannedSpawnHoleIds.clear();
+  }
 
   constructor(
     public world: CANNON.World,
@@ -54,6 +71,7 @@ export class Mouse {
       position: THREE.Vector3;
       inward: THREE.Vector3;
       room: THREE.Box3;
+      id?: number;
     }[],
     public sfx?: Sound
   ) {
@@ -106,10 +124,20 @@ export class Mouse {
     this.heading.set(Math.sin(ang), 0, Math.cos(ang));
     // Store holes reference
     this.holes = holes;
+    // Initialize movement baseline
+    this.movementBaseline = new THREE.Vector3(pos.x, 0, pos.z);
   }
 
   update(dt: number, catPos: THREE.Vector3) {
     if (!this.alive) return;
+    // Countdown bans and drop expired entries
+    if (this.bannedHoles.size > 0) {
+      for (const [idx, t] of Array.from(this.bannedHoles.entries())) {
+        const nt = t - dt;
+        if (nt <= 0) this.bannedHoles.delete(idx);
+        else this.bannedHoles.set(idx, nt);
+      }
+    }
     // If traveling through a hole, wait out the delay hidden, then pop out
     if (this.inHoleTimer > 0) {
       this.inHoleTimer = Math.max(0, this.inHoleTimer - dt);
@@ -171,21 +199,26 @@ export class Mouse {
       // If seeking holes this pursuit, try to immediately aim toward the nearest hole in same room
       if (this.seekHoleThisPursuit && this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
         const myPos = new THREE.Vector3(this.body.position.x, 0.5, this.body.position.z);
-        let nearest: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 } | null = null;
+        let nearestIdx: number = -1;
         let bestD = Infinity;
-        for (const h of this.holes) {
+        for (let i = 0; i < this.holes.length; i++) {
+          if (this.bannedHoles.has(i)) continue; // skip banned holes
+          const h = this.holes[i];
           if (!h.room.containsPoint(myPos)) continue;
           const d = myPos.distanceTo(h.position);
           if (d < bestD) {
             bestD = d;
-            nearest = h;
+            nearestIdx = i;
           }
         }
-        if (nearest) {
+        if (nearestIdx >= 0) {
+          const nearest = this.holes[nearestIdx];
           const aim = nearest.position.clone().addScaledVector(nearest.inward, -0.1);
           this.target = aim;
           const flatPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
           dir.copy(aim).sub(flatPos).normalize();
+          // Track seeking this hole
+          this.updateSeekingTarget(nearestIdx, dt);
         }
       }
     }
@@ -243,27 +276,37 @@ export class Mouse {
       // Double seek radius when pursued to prefer holes sooner
       const seekRadius = pursued ? 12 : 6;
       const myPos = new THREE.Vector3(this.body.position.x, 0.5, this.body.position.z);
-      let nearest: {
-        position: THREE.Vector3;
-        inward: THREE.Vector3;
-        room: THREE.Box3;
-      } | null = null;
+      let nearestIdx: number = -1;
       let bestD = Infinity;
-      for (const h of this.holes) {
+      for (let i = 0; i < this.holes.length; i++) {
+        if (this.bannedHoles.has(i)) continue; // skip banned holes
+        const h = this.holes[i];
         // Only consider holes whose room contains the mouse
         if (!h.room.containsPoint(myPos)) continue;
         const d = myPos.distanceTo(h.position);
         if (d < bestD) {
           bestD = d;
-          nearest = h;
+          nearestIdx = i;
         }
       }
-      if (nearest && bestD <= seekRadius) {
+      if (nearestIdx >= 0 && bestD <= seekRadius) {
+        const nearest = this.holes[nearestIdx];
         const aim = nearest.position.clone().addScaledVector(nearest.inward, -0.1); // stop a tad in front of the hole
         this.target = aim;
         const flatPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
         dir.copy(aim).sub(flatPos).normalize();
+        // Track seeking this hole
+        this.updateSeekingTarget(nearestIdx, dt);
+      } else {
+        // Not seeking a hole this frame
+        this.seekingHoleIdx = null;
+        this.seekingHoleTimer = 0;
       }
+    }
+    else {
+      // Not seeking a hole this frame
+      this.seekingHoleIdx = null;
+      this.seekingHoleTimer = 0;
     }
 
     // Stuck resolution: if not reaching speed along dir, flip one axis and try a new waypoint
@@ -323,7 +366,12 @@ export class Mouse {
           break;
         }
       }
-      if (enteredFrom) this.teleportFromHole(enteredFrom);
+      if (enteredFrom) {
+        // Clear seeking state when entering a hole
+        this.seekingHoleIdx = null;
+        this.seekingHoleTimer = 0;
+        this.teleportFromHole(enteredFrom);
+      }
     }
 
     // keep within bounds
@@ -346,16 +394,63 @@ export class Mouse {
     }
     // Remember pursuit state for next frame
     this.wasPursued = pursued;
+
+    // Rolling stuck detection: if the mouse hasn't moved at least the threshold from the
+    // baseline for 7 seconds, ban the last-exited hole and respawn from another hole.
+    const curXZ = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
+    const smallDist = 1.0; // meters
+    if (!this.movementBaseline) this.movementBaseline = curXZ.clone();
+    const moved = curXZ.distanceTo(this.movementBaseline);
+    if (moved >= smallDist) {
+      // Reset baseline and timer once we've made meaningful progress
+      this.movementBaseline.copy(curXZ);
+      this.stagnantTimer = 0;
+      // Successful movement resets respawn attempt budget
+      this.respawnAttempts = 0;
+    } else {
+      this.stagnantTimer += dt;
+      if (this.stagnantTimer >= 7.0 && this.respawnAttempts < 3) {
+        if (this.lastExitHoleId != null) Mouse.bannedSpawnHoleIds.add(this.lastExitHoleId);
+        const newDest = this.pickSpawnableHole(this.lastExitHoleId ?? -1);
+        if (newDest) {
+          this.respawnAttempts++;
+          this.performHoleExit(newDest);
+          // Reset rolling monitor after forced respawn
+          this.stagnantTimer = 0;
+          this.movementBaseline = curXZ.clone();
+        } else {
+          // No alternative hole found; avoid constant retries
+          this.stagnantTimer = 0;
+        }
+      }
+    }
   }
 
-  private teleportFromHole(from: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) {
-    // Choose a random destination hole (could be same if only one exists)
-    const pool = this.holes;
-    let dest = pool[Math.floor(Math.random() * pool.length)];
-    if (pool.length > 1) {
-      // try to avoid picking the same hole when possible
-      for (let i = 0; i < 4 && dest === from; i++) dest = pool[Math.floor(Math.random() * pool.length)];
+  // Track seeking duration for a specific hole index; temp-ban after 4s
+  private updateSeekingTarget(holeIdx: number, dt: number) {
+    if (this.seekingHoleIdx !== holeIdx) {
+      this.seekingHoleIdx = holeIdx;
+      this.seekingHoleTimer = 0;
+    } else {
+      this.seekingHoleTimer += dt;
+      if (this.seekingHoleTimer >= 4.0) {
+        // Ban this hole for 60 seconds and reset seeking
+        this.bannedHoles.set(holeIdx, 60.0);
+        this.seekingHoleIdx = null;
+        this.seekingHoleTimer = 0;
+        // Nudge target away from this banned hole to avoid immediately picking it again
+        const h = this.holes[holeIdx];
+        const inward = h.inward.clone().setY(0).normalize();
+        const away = new THREE.Vector3(-inward.x, 0, -inward.z);
+        const pos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
+        this.target = pos.clone().addScaledVector(away, 1.0 + Math.random());
+      }
     }
+  }
+
+  private teleportFromHole(from: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3; id?: number }) {
+    // Choose a random destination hole (could be same if only one exists)
+    const dest = this.pickSpawnableHole(from.id ?? -1) || this.holes[Math.floor(Math.random() * this.holes.length)];
     // Begin in-hole travel: hide, freeze, and schedule exit after 0.25s
     this.inHoleTimer = 0.25;
     this.pendingExitHole = dest;
@@ -385,7 +480,7 @@ export class Mouse {
     this.holeIgnoreTimer = 2.0;
   }
 
-  private performHoleExit(dest: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) {
+  private performHoleExit(dest: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3; id?: number }) {
     // Spawn a bit inside the room in front of the destination hole
     const inward = dest.inward.clone().setY(0).normalize();
     const offset = 0.6; // meters inside the room
@@ -407,6 +502,21 @@ export class Mouse {
     this.pathTimer = 1.0;
     // Prevent immediate re-entry
     this.holeIgnoreTimer = 2.0;
+    // Update last hole and reset rolling monitor baseline at exit
+    this.lastExitHoleId = dest.id ?? null;
+    // Reset attempts for a fresh exit and baseline
+    this.respawnAttempts = 0;
+    this.movementBaseline = exitPos.clone();
+    this.stagnantTimer = 0;
+  }
+
+  // Choose a hole that is not banned for spawns; avoid a specific id if provided
+  private pickSpawnableHole(avoidId: number): { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3; id?: number } | null {
+    const candidates = this.holes.filter((h) => (h.id == null || !Mouse.bannedSpawnHoleIds.has(h.id)) && (h.id ?? -2) !== avoidId);
+    if (candidates.length > 0) return candidates[Math.floor(Math.random() * candidates.length)];
+    // fallback to any non-avoid hole
+    const fallback = this.holes.filter((h) => (h.id ?? -2) !== avoidId);
+    return fallback.length > 0 ? fallback[Math.floor(Math.random() * fallback.length)] : null;
   }
 
   kill() {

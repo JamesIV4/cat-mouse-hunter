@@ -146,6 +146,8 @@ function createLevel(n: number) {
     if (m.alive) m.kill();
   }
   mice = [];
+  // Reset per-level banned mouse-hole spawns
+  Mouse.resetHoleBans();
   const spec = specForLevel(n);
   required = spec.miceRequired;
   // Create a no-spawn safe radius around the player's start so mice don't spawn too close

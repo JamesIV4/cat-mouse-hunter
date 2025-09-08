@@ -624,140 +624,46 @@ export class Level {
       const dir = new THREE.Vector3().subVectors(b, a);
       const len = dir.length();
       if (len < 0.8) return; // too short
-      // pick a position along the edge, avoid corners; retry if colliding with objects
+      // pick a position roughly along the middle of the edge
       const angle = Math.atan2(dir.x, dir.z);
       const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
       const n = new THREE.Vector3(dir.z, 0, -dir.x).normalize(); // outward normal (one side)
       const roomCenter = new THREE.Vector3((room.min.x + room.max.x) / 2, 0, (room.min.z + room.max.z) / 2);
       const toCenter = new THREE.Vector3().subVectors(roomCenter, mid).setY(0).normalize();
       const inward = n.dot(toCenter) > 0 ? n : n.clone().multiplyScalar(-1);
-
-      // Define a small prism that represents the mouse hole collider intruding into the room
-      const doorHalf = 1.2;
-      const baseboardH = 0.24;
-      const holeWidth = 0.48; // collider a bit wider than visual
-      const holeDepth = 0.35; // collider extends further into room
-      const holeClearance = 0.08; // keep a bit of extra space around hole
-      const corridorDepth = 0.6; // additional forward clearance beyond the hole
-      const wallT = 0.35;
-      const eps = 0.01;
-      const rectOverlap = (aabb: {minX:number;maxX:number;minZ:number;maxZ:number}, b: {minX:number;maxX:number;minZ:number;maxZ:number}) => {
-        return !(aabb.maxX < b.minX || aabb.minX > b.maxX || aabb.maxZ < b.minZ || aabb.minZ > b.maxZ);
-      };
-
-      let pos: THREE.Vector3 | null = null;
-      let tries = 16;
-      pickSpot: while (tries-- > 0) {
-        const t = 0.2 + Math.random() * 0.6;
-        const candPos = a.clone().addScaledVector(dir, t);
-        // Build prism center just inside room so it doesn't intersect the wall itself
-        const center = candPos
-          .clone()
-          .add(inward.clone().multiplyScalar(wallT / 2 + holeDepth / 2 + eps));
-        const half = { x: holeWidth / 2, z: holeDepth / 2 };
-        const aabb = {
-          minX: center.x - half.x - holeClearance,
-          maxX: center.x + half.x + holeClearance,
-          minZ: center.z - half.z - holeClearance,
-          maxZ: center.z + half.z + holeClearance,
-        };
-        // Corridor AABB further into the room from the hole opening
-        const corridorCenter = candPos
-          .clone()
-          .add(inward.clone().multiplyScalar(wallT / 2 + corridorDepth / 2 + eps));
-        const corridorHalf = { x: holeWidth / 2 + holeClearance, z: corridorDepth / 2 };
-        const corridorAabb = {
-          minX: corridorCenter.x - corridorHalf.x,
-          maxX: corridorCenter.x + corridorHalf.x,
-          minZ: corridorCenter.z - corridorHalf.z,
-          maxZ: corridorCenter.z + corridorHalf.z,
-        };
-        // 1) Ensure does not overlap doorway rectangles for this room (if available)
-        const ri = rooms.indexOf(room);
-        if (ri >= 0 && this.doorwayRectsByRoom[ri]) {
-          let bad = false;
-          for (const d of this.doorwayRectsByRoom[ri]) {
-            if (rectOverlap(aabb, d) || rectOverlap(corridorAabb, d)) {
-              bad = true;
-              break;
-            }
-          }
-          if (bad) continue pickSpot;
-        }
-        // 2) Keep corridor within room interior bounds (avoid walls)
-        const inside = (X: number, Z: number) =>
-          X >= room.min.x + wallT / 2 + eps &&
-          X <= room.max.x - wallT / 2 - eps &&
-          Z >= room.min.z + wallT / 2 + eps &&
-          Z <= room.max.z - wallT / 2 - eps;
-        if (
-          !inside(corridorAabb.minX, corridorAabb.minZ) ||
-          !inside(corridorAabb.maxX, corridorAabb.maxZ)
-        ) continue pickSpot;
-
-        // 3) Ensure prism/corridor does not intersect any existing physics body AABB (props, couches, etc.)
-        let hitsBody = false;
-        for (const bdy of this.bodies) {
-          // Update and read AABB if supported
-          try {
-            (bdy as any).computeAABB && (bdy as any).computeAABB();
-            const bb = (bdy as any).aabb as { lowerBound: any; upperBound: any } | undefined;
-            if (!bb) continue;
-            const bb2 = {
-              minX: bb.lowerBound.x,
-              maxX: bb.upperBound.x,
-              minZ: bb.lowerBound.z,
-              maxZ: bb.upperBound.z,
-            };
-            if (rectOverlap(aabb, bb2) || rectOverlap(corridorAabb, bb2)) {
-              hitsBody = true;
-              break;
-            }
-          } catch {}
-        }
-        if (hitsBody) continue pickSpot;
-        pos = candPos;
-        break;
-      }
-      if (!pos) return; // give up if no valid spot found
-
-      // Do not place holes where a doorway is carved on this wall segment
+      // pick a point along the edge away from corners and NOT in a doorway span
       const epsEdge = 1e-3;
+      const doorHalf = 1.2;
+      const widthExtra = 0.4;
       const idx = rooms.indexOf(room);
-      if (idx >= 0) {
-        const openings = roomOpenings[idx];
-        const doorHalf = 1.2; // keep in sync with door carving
-        const widthExtra = 0.4; // margin around the doorway
-        let isDoorSeg = false;
-        for (const o of openings) {
-          // Check which wall this edge lies on and compare lateral coordinate to doorway center
-          if (Math.abs(pos.z - room.max.z) < epsEdge && Math.abs(o.z - room.max.z) < epsEdge) {
-            if (pos.x >= o.x - (doorHalf + widthExtra) && pos.x <= o.x + (doorHalf + widthExtra)) {
-              isDoorSeg = true;
-              break;
+      let pos: THREE.Vector3 | null = null;
+      for (let tries = 0; tries < 16 && !pos; tries++) {
+        const t = 0.2 + Math.random() * 0.6;
+        const cand = a.clone().addScaledVector(dir, t);
+        if (idx >= 0) {
+          const openings = roomOpenings[idx];
+          // Determine which wall this edge lies on by comparing endpoints
+          const wallIsNorth = Math.abs(a.z - room.max.z) < epsEdge && Math.abs(b.z - room.max.z) < epsEdge;
+          const wallIsSouth = Math.abs(a.z - room.min.z) < epsEdge && Math.abs(b.z - room.min.z) < epsEdge;
+          const wallIsEast = Math.abs(a.x - room.max.x) < epsEdge && Math.abs(b.x - room.max.x) < epsEdge;
+          const wallIsWest = Math.abs(a.x - room.min.x) < epsEdge && Math.abs(b.x - room.min.x) < epsEdge;
+          let inDoor = false;
+          for (const o of openings) {
+            if (wallIsNorth && Math.abs(o.z - room.max.z) < epsEdge) {
+              if (cand.x >= o.x - (doorHalf + widthExtra) && cand.x <= o.x + (doorHalf + widthExtra)) { inDoor = true; break; }
+            } else if (wallIsSouth && Math.abs(o.z - room.min.z) < epsEdge) {
+              if (cand.x >= o.x - (doorHalf + widthExtra) && cand.x <= o.x + (doorHalf + widthExtra)) { inDoor = true; break; }
+            } else if (wallIsEast && Math.abs(o.x - room.max.x) < epsEdge) {
+              if (cand.z >= o.z - (doorHalf + widthExtra) && cand.z <= o.z + (doorHalf + widthExtra)) { inDoor = true; break; }
+            } else if (wallIsWest && Math.abs(o.x - room.min.x) < epsEdge) {
+              if (cand.z >= o.z - (doorHalf + widthExtra) && cand.z <= o.z + (doorHalf + widthExtra)) { inDoor = true; break; }
             }
           }
-          if (Math.abs(pos.z - room.min.z) < epsEdge && Math.abs(o.z - room.min.z) < epsEdge) {
-            if (pos.x >= o.x - (doorHalf + widthExtra) && pos.x <= o.x + (doorHalf + widthExtra)) {
-              isDoorSeg = true;
-              break;
-            }
-          }
-          if (Math.abs(pos.x - room.max.x) < epsEdge && Math.abs(o.x - room.max.x) < epsEdge) {
-            if (pos.z >= o.z - (doorHalf + widthExtra) && pos.z <= o.z + (doorHalf + widthExtra)) {
-              isDoorSeg = true;
-              break;
-            }
-          }
-          if (Math.abs(pos.x - room.min.x) < epsEdge && Math.abs(o.x - room.min.x) < epsEdge) {
-            if (pos.z >= o.z - (doorHalf + widthExtra) && pos.z <= o.z + (doorHalf + widthExtra)) {
-              isDoorSeg = true;
-              break;
-            }
-          }
+          if (inDoor) continue;
         }
-        if (isDoorSeg) return; // skip placing hole on doorway span
+        pos = cand;
       }
+      if (!pos) return;
 
       // Geometry sizes
       const depth = 0.02; // thin, sits on wall face
@@ -792,12 +698,14 @@ export class Level {
 
       this.scene.add(group);
       this.meshes.push(group);
-      // Record this mouse hole for gameplay logic
+      // Record this mouse hole for gameplay logic (include stable id)
+      const hid = this.mouseHoles.length;
       this.mouseHoles.push({
         position: group.position.clone(),
         inward: inward.clone(),
         room,
-      });
+        id: hid as any,
+      } as any);
 
       // Create a matching black cutout over the baseboard area so the hole lines up visually
       const baseT = 0.06; // baseboard thickness
@@ -822,7 +730,7 @@ export class Level {
       const byArea = Math.floor(area / 120); // +1 per ~120 m^2 footprint
       const targetHoles = Math.max(3, Math.min(24, byRooms + byArea));
 
-      // Build list of all interior edges as placement candidates
+      // Build list of all INTERIOR room edges as placement candidates (exclude exterior perimeter)
       const candidates: { room: THREE.Box3; a: THREE.Vector3; b: THREE.Vector3 }[] = [];
       for (let i = 0; i < rooms.length; i++) {
         const r = rooms[i];
