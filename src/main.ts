@@ -5,6 +5,7 @@ import { Mouse } from "./mouse";
 import { Level, LevelSpec } from "./level";
 import { Input } from "./input";
 import { UI } from "./ui";
+import { toggleColliderDebug } from "./props";
 import { Sound } from "./audio";
 import { ParticleSystem } from "./particles";
 
@@ -240,6 +241,15 @@ function loop() {
     currentLevel++;
     createLevel(currentLevel);
   }
+
+  // Debug: toggle collider visibility with F2
+  // Edge-detect the key press to avoid rapid toggling while held
+  (loop as any)._prevF2 = (loop as any)._prevF2 || false;
+  const f2 = !!input.keys["F2"];
+  if (f2 && !(loop as any)._prevF2) {
+    toggleColliderDebug();
+  }
+  (loop as any)._prevF2 = f2;
 
   UI.setState(cat.state);
 

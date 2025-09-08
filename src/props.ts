@@ -4,6 +4,21 @@ import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 
+// Collider debug registry and controls
+let colliderDebugEnabled = false;
+const colliderDebugObjects: THREE.Object3D[] = [];
+export function setColliderDebugVisible(visible: boolean) {
+  colliderDebugEnabled = !!visible;
+  for (const o of colliderDebugObjects) o.visible = colliderDebugEnabled;
+}
+export function toggleColliderDebug() {
+  setColliderDebugVisible(!colliderDebugEnabled);
+}
+function registerColliderDebugObject(obj: THREE.Object3D) {
+  obj.visible = colliderDebugEnabled;
+  colliderDebugObjects.push(obj);
+}
+
 const fbxCache = new Map<string, Promise<THREE.Object3D>>();
 const objCache = new Map<string, Promise<THREE.Object3D>>();
 
@@ -106,6 +121,29 @@ export type PlacePropOpts = {
    */
   shrink?: number;
   /**
+   * Control collider fidelity. String presets or numeric point budget.
+   * - "low" ~ 400 pts, "medium" ~ 1200 (default), "high" ~ 2500
+   * - Or provide a number to override point budget directly.
+   */
+  colliderDetail?: "low" | "medium" | "high" | number;
+  /**
+   * Explicit max points for hull sampling (overrides colliderDetail if provided).
+   */
+  colliderMaxPoints?: number;
+  /**
+   * Quantization grid size in meters used to merge near-duplicate points. Smaller = more detail (default 0.005).
+   */
+  colliderQuantize?: number;
+  /** Number of clusters to split a single-mesh model into when using compound hulls. Default 2. */
+  colliderClusterCount?: number;
+  /** Collider strategy per object: 'compound' (default) or 'hull' (simple). */
+  colliderStrategy?: "compound" | "hull";
+  /**
+   * Collider strategy. 'compound' builds convex hulls per child mesh (with a simple clustering fallback),
+   * 'hull' builds a single convex hull. Default 'compound'.
+   */
+  colliderStrategy?: "compound" | "hull";
+  /**
    * Optional tag that will set a boolean flag like `is<Tag>` on the created physics body (e.g., `tag: "toilet"` sets `isToilet`).
    */
   tag?: string;
@@ -144,9 +182,11 @@ export type PlacePropOpts = {
 function buildConvexHullStaticBody(
   world: CANNON.World,
   inst: THREE.Object3D,
+  scene: THREE.Scene,
   tag?: string,
   shrink = 0.9,
-  maxPoints = 300
+  maxPoints = 1200,
+  quantize = 0.005
 ): CANNON.Body | null {
   inst.updateMatrixWorld(true);
   // Gather points from all meshes
@@ -172,7 +212,7 @@ function buildConvexHullStaticBody(
   if (pts.length < 4) return null; // not enough for a hull
 
   // Quantize to collapse near-duplicates
-  const quant = 1e-2;
+  const quant = Math.max(1e-4, quantize);
   const map = new Map<string, THREE.Vector3>();
   for (const p of pts) {
     const k = `${Math.round(p.x / quant)},${Math.round(p.y / quant)},${Math.round(p.z / quant)}`;
@@ -231,6 +271,200 @@ function buildConvexHullStaticBody(
   const body = new CANNON.Body({ mass: 0 });
   body.addShape(shape);
   body.position.set(centroid.x, centroid.y, centroid.z);
+  if (tag) (body as any)[`is${tag[0].toUpperCase()}${tag.slice(1)}`] = true;
+  world.addBody(body);
+
+  // Debug wireframe for the collider hull
+  try {
+    const geom = new THREE.BufferGeometry();
+    const posArr: number[] = [];
+    for (const v of cannonVerts) posArr.push(v.x, v.y, v.z);
+    const idxArr: number[] = [];
+    for (const f of faces) {
+      if (f.length === 3) idxArr.push(f[0], f[1], f[2]);
+      else if (f.length > 3) {
+        // fan triangulation for any non-tris
+        for (let i = 1; i < f.length - 1; i++) idxArr.push(f[0], f[i], f[i + 1]);
+      }
+    }
+    geom.setAttribute("position", new THREE.Float32BufferAttribute(posArr, 3));
+    geom.setIndex(idxArr);
+    geom.computeVertexNormals();
+    const wire = new THREE.LineSegments(
+      new THREE.WireframeGeometry(geom),
+      new THREE.LineBasicMaterial({ color: 0x00ff88, depthTest: true, depthWrite: false })
+    );
+    wire.position.set(centroid.x, centroid.y, centroid.z);
+    wire.renderOrder = 1;
+    registerColliderDebugObject(wire);
+    scene.add(wire);
+  } catch {}
+  return body;
+}
+
+// Build a top-down heightfield collider (Option B) covering the model's XZ footprint
+//
+
+// Build compound collider via convex hull per child mesh.
+// If only a single mesh exists, falls back to simple 2-cluster split along the major axis to avoid L-shape capping.
+function buildCompoundMeshHullsBody(
+  world: CANNON.World,
+  inst: THREE.Object3D,
+  scene: THREE.Scene,
+  tag: string | undefined,
+  shrink: number,
+  maxPoints: number,
+  quantize: number,
+  clusterCount: number
+): CANNON.Body | null {
+  inst.updateMatrixWorld(true);
+  type Part = { mesh: THREE.Mesh; points: THREE.Vector3[] };
+  const parts: Part[] = [];
+  const temp: THREE.Vector3[] = [];
+  inst.traverse((o: any) => {
+    if (!o || !o.isMesh || !o.geometry) return;
+    const g: THREE.BufferGeometry = o.geometry;
+    const pos = g.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (!pos) return;
+    const arr = pos.array as ArrayLike<number>;
+    const stride = Math.max(1, Math.floor((arr.length / 3) / Math.max(100, Math.floor(maxPoints / 4))));
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i < pos.count; i += stride) {
+      const ix = i * 3;
+      pts.push(new THREE.Vector3((arr as any)[ix], (arr as any)[ix + 1], (arr as any)[ix + 2]).applyMatrix4(o.matrixWorld));
+    }
+    parts.push({ mesh: o, points: pts });
+  });
+  if (parts.length === 0) return null;
+
+  // If only one mesh, split its points into k clusters along major axis (1D k-means)
+  if (parts.length === 1) {
+    const pts = parts[0].points;
+    if (pts.length < 8) return null;
+    const aabb = new THREE.Box3().setFromPoints(pts);
+    const size = new THREE.Vector3();
+    aabb.getSize(size);
+    const axes: ("x" | "y" | "z")[] = ["x", "y", "z"];
+    const major = axes.reduce((m, ax) => (size[ax] > size[m] ? ax : m), "x" as "x" | "y" | "z");
+    const k = Math.max(2, Math.min(8, Math.floor(clusterCount) || 2));
+    // Initialize centers evenly spaced across [min,max]
+    const minV = aabb.min[major];
+    const maxV = aabb.max[major];
+    const centers: number[] = new Array(k).fill(0).map((_, i) => minV + ((i + 0.5) / k) * (maxV - minV));
+    const assign = new Array(pts.length).fill(0);
+    for (let iter = 0; iter < 12; iter++) {
+      // Assign
+      for (let i = 0; i < pts.length; i++) {
+        const v = pts[i][major];
+        let best = 0;
+        let bd = Math.abs(v - centers[0]);
+        for (let c = 1; c < k; c++) {
+          const d = Math.abs(v - centers[c]);
+          if (d < bd) {
+            bd = d;
+            best = c;
+          }
+        }
+        assign[i] = best;
+      }
+      // Update centers
+      const sums = new Array(k).fill(0);
+      const counts = new Array(k).fill(0);
+      for (let i = 0; i < pts.length; i++) {
+        const ci = assign[i];
+        sums[ci] += pts[i][major];
+        counts[ci]++;
+      }
+      for (let c = 0; c < k; c++) if (counts[c] > 0) centers[c] = sums[c] / counts[c];
+    }
+    // Split into parts
+    const buckets: THREE.Vector3[][] = new Array(k).fill(0).map(() => [] as THREE.Vector3[]);
+    for (let i = 0; i < pts.length; i++) buckets[assign[i]].push(pts[i]);
+    parts.length = 0;
+    for (const b of buckets) if (b.length >= 4) parts.push({ mesh: null as any, points: b });
+    if (parts.length === 0) parts.push({ mesh: null as any, points: pts });
+  }
+
+  // Build hulls per part
+  const shapes: { shape: any; centroid: THREE.Vector3 }[] = [];
+  const overall = new THREE.Vector3();
+  for (const part of parts) {
+    // Quantize and uniq
+    const map = new Map<string, THREE.Vector3>();
+    const q = Math.max(1e-4, quantize);
+    for (const p of part.points) {
+      const k = `${Math.round(p.x / q)},${Math.round(p.y / q)},${Math.round(p.z / q)}`;
+      if (!map.has(k)) map.set(k, p);
+      if (map.size >= maxPoints) break;
+    }
+    const uniq = Array.from(map.values());
+    if (uniq.length < 4) continue;
+    const centroid = uniq.reduce((acc, v) => acc.add(v), new THREE.Vector3()).multiplyScalar(1 / uniq.length);
+    const shr = Math.max(0.5, Math.min(1, shrink || 1));
+    const shrunk = uniq.map((p) => p.clone().sub(centroid).multiplyScalar(shr).add(centroid));
+    let hull: THREE.BufferGeometry | null = null;
+    try {
+      hull = new ConvexGeometry(shrunk) as unknown as THREE.BufferGeometry;
+    } catch {
+      continue;
+    }
+    const hPos = hull.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (!hPos) continue;
+    const faces: number[][] = [];
+    const unique: THREE.Vector3[] = [];
+    const vmap = new Map<string, number>();
+    const mk = (x: number, y: number, z: number) => `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+    for (let i = 0; i < hPos.count; i += 3) {
+      const tri: number[] = [];
+      for (let k = 0; k < 3; k++) {
+        const ix = (i + k) * 3;
+        const vx = (hPos.array as any)[ix];
+        const vy = (hPos.array as any)[ix + 1];
+        const vz = (hPos.array as any)[ix + 2];
+        const kk = mk(vx, vy, vz);
+        let vi = vmap.get(kk);
+        if (vi === undefined) {
+          vi = unique.length;
+          unique.push(new THREE.Vector3(vx, vy, vz));
+          vmap.set(kk, vi);
+        }
+        tri.push(vi);
+      }
+      faces.push(tri);
+    }
+    if (unique.length < 4 || faces.length < 4) continue;
+    const cannonVerts = unique.map((v) => new CANNON.Vec3(v.x - centroid.x, v.y - centroid.y, v.z - centroid.z));
+    const shape = new (CANNON as any).ConvexPolyhedron({ vertices: cannonVerts, faces });
+    shapes.push({ shape, centroid });
+
+    // Debug wire per part
+    try {
+      const geom = new THREE.BufferGeometry();
+      const posArr: number[] = [];
+      for (const v of cannonVerts) posArr.push(v.x, v.y, v.z);
+      const idxArr: number[] = [];
+      for (const f of faces) {
+        if (f.length === 3) idxArr.push(f[0], f[1], f[2]);
+        else if (f.length > 3) for (let i = 1; i < f.length - 1; i++) idxArr.push(f[0], f[i], f[i + 1]);
+      }
+      geom.setAttribute("position", new THREE.Float32BufferAttribute(posArr, 3));
+      geom.setIndex(idxArr);
+      const wire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(geom),
+        new THREE.LineBasicMaterial({ color: 0x00c8ff, depthTest: true, depthWrite: false })
+      );
+      wire.position.copy(centroid);
+      registerColliderDebugObject(wire);
+      scene.add(wire);
+    } catch {}
+
+    overall.add(centroid);
+  }
+  if (shapes.length === 0) return null;
+  overall.multiplyScalar(1 / shapes.length);
+  const body = new CANNON.Body({ mass: 0 });
+  for (const s of shapes) body.addShape(s.shape, new CANNON.Vec3(s.centroid.x - overall.x, s.centroid.y - overall.y, s.centroid.z - overall.z));
+  body.position.set(overall.x, overall.y, overall.z);
   if (tag) (body as any)[`is${tag[0].toUpperCase()}${tag.slice(1)}`] = true;
   world.addBody(body);
   return body;
@@ -370,7 +604,53 @@ export function placePropAgainstWallOnce(
         scene.add(inst);
         let body: CANNON.Body | null = null;
         if (opts.collidable !== false) {
-          body = buildConvexHullStaticBody(world, inst, opts.tag, opts.shrink ?? 0.9);
+          const strategy = opts.colliderStrategy ?? "compound";
+          if (strategy === "hull") {
+            const maxPts = typeof opts.colliderMaxPoints === "number"
+              ? opts.colliderMaxPoints
+              : typeof opts.colliderDetail === "number"
+              ? (opts.colliderDetail as number)
+              : opts.colliderDetail === "high"
+              ? 2500
+              : opts.colliderDetail === "low"
+              ? 400
+              : 1200;
+            const quant = typeof opts.colliderQuantize === "number"
+              ? opts.colliderQuantize
+              : opts.colliderDetail === "high"
+              ? 0.003
+              : opts.colliderDetail === "low"
+              ? 0.01
+              : 0.005;
+            body = buildConvexHullStaticBody(world, inst, scene, opts.tag, opts.shrink ?? 0.9, maxPts, quant);
+          } else {
+            const maxPts = typeof opts.colliderMaxPoints === "number"
+              ? opts.colliderMaxPoints
+              : typeof opts.colliderDetail === "number"
+              ? (opts.colliderDetail as number)
+              : opts.colliderDetail === "high"
+              ? 2500
+              : opts.colliderDetail === "low"
+              ? 600
+              : 1200;
+            const quant = typeof opts.colliderQuantize === "number"
+              ? opts.colliderQuantize
+              : opts.colliderDetail === "high"
+              ? 0.003
+              : opts.colliderDetail === "low"
+              ? 0.01
+              : 0.005;
+            body = buildCompoundMeshHullsBody(
+              world,
+              inst,
+              scene,
+              opts.tag,
+              opts.shrink ?? 0.9,
+              maxPts,
+              quant,
+              opts.colliderClusterCount ?? 2
+            );
+          }
         }
         if (opts.onPlaced) opts.onPlaced(inst, body);
         return;
@@ -472,7 +752,53 @@ export function placePropAt(
     // Collider
     let body: CANNON.Body | null = null;
     if (opts.collidable !== false) {
-      body = buildConvexHullStaticBody(world, inst, opts.tag, opts.shrink ?? 0.9);
+      const strategy = opts.colliderStrategy ?? "compound";
+      if (strategy === "hull") {
+        const maxPts = typeof opts.colliderMaxPoints === "number"
+          ? opts.colliderMaxPoints
+          : typeof opts.colliderDetail === "number"
+          ? (opts.colliderDetail as number)
+          : opts.colliderDetail === "high"
+          ? 2500
+          : opts.colliderDetail === "low"
+          ? 400
+          : 1200;
+        const quant = typeof opts.colliderQuantize === "number"
+          ? opts.colliderQuantize
+          : opts.colliderDetail === "high"
+          ? 0.003
+          : opts.colliderDetail === "low"
+          ? 0.01
+          : 0.005;
+        body = buildConvexHullStaticBody(world, inst, scene, opts.tag, opts.shrink ?? 0.9, maxPts, quant);
+      } else {
+        const maxPts = typeof opts.colliderMaxPoints === "number"
+          ? opts.colliderMaxPoints
+          : typeof opts.colliderDetail === "number"
+          ? (opts.colliderDetail as number)
+          : opts.colliderDetail === "high"
+          ? 2500
+          : opts.colliderDetail === "low"
+          ? 600
+          : 1200;
+        const quant = typeof opts.colliderQuantize === "number"
+          ? opts.colliderQuantize
+          : opts.colliderDetail === "high"
+          ? 0.003
+          : opts.colliderDetail === "low"
+          ? 0.01
+          : 0.005;
+        body = buildCompoundMeshHullsBody(
+          world,
+          inst,
+          scene,
+          opts.tag,
+          opts.shrink ?? 0.9,
+          maxPts,
+          quant,
+          opts.colliderClusterCount ?? 2
+        );
+      }
     }
     if (opts.onPlaced) opts.onPlaced(inst, body);
   });

@@ -902,6 +902,8 @@ export class Level {
         inwardOffset: 1.35,
         doorHalf: 1.2,
         doorMargin: 0.6,
+        // Use simple convex hull for couches
+        colliderStrategy: "hull",
         shrink: 0.9,
         tag: "couch",
         onPlaced: (mesh, body) => {
