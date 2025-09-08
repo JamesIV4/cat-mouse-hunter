@@ -18,12 +18,7 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x22303a);
 
-const camera = new THREE.PerspectiveCamera(
-  60,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  1000
-);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 2.8, 4.2);
 
 // Lights
@@ -47,23 +42,23 @@ const sfx = new Sound();
 
 // Pointer lock for seamless mouse look
 const canvas = renderer.domElement;
-canvas.style.outline = 'none';
+canvas.style.outline = "none";
 canvas.tabIndex = 0;
-canvas.addEventListener('click', () => {
+canvas.addEventListener("click", () => {
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
   }
   sfx.resume();
 });
-document.addEventListener('pointerlockchange', () => {
+document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === canvas;
-  const hint = document.getElementById('lockHint') as HTMLElement | null;
-  if (hint) hint.style.display = locked ? 'none' : 'block';
+  const hint = document.getElementById("lockHint") as HTMLElement | null;
+  if (hint) hint.style.display = locked ? "none" : "block";
 });
 
 // Sensitivity slider
-const sens = document.getElementById('sensitivity') as HTMLInputElement | null;
-const sensLabel = document.getElementById('sensitivityLabel') as HTMLElement | null;
+const sens = document.getElementById("sensitivity") as HTMLInputElement | null;
+const sensLabel = document.getElementById("sensitivityLabel") as HTMLElement | null;
 if (sens) {
   const applySens = () => {
     const v = Number(sens.value);
@@ -71,7 +66,7 @@ if (sens) {
     if (sensLabel) sensLabel.textContent = `${input.sensitivity.toFixed(2)}x`;
   };
   applySens();
-  sens.addEventListener('input', applySens);
+  sens.addEventListener("input", applySens);
 }
 
 const level = new Level(world, scene);
@@ -83,8 +78,8 @@ function specForLevel(n: number): LevelSpec {
   const mouseCount = 4 + Math.floor(n * 1.5);
   // Scale house size with level
   const houseHalfSize = 10 + Math.min(20, Math.floor(n * 2)); // grows up to +20
-  const sizeScale = (houseHalfSize / 10);
-  const houseArea = (houseHalfSize * 2) * (houseHalfSize * 2);
+  const sizeScale = houseHalfSize / 10;
+  const houseArea = houseHalfSize * 2 * (houseHalfSize * 2);
   // Aim for similar room density across sizes
   const desiredRooms = Math.min(14, 3 + Math.floor(n * 0.8) + Math.floor((sizeScale - 1) * 3));
   const roomDensity = desiredRooms / houseArea;
@@ -118,9 +113,7 @@ function createLevel(n: number) {
     world.removeBody(cat.body);
   }
   // Place cat at a random spawn point
-  const start =
-    level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)] ||
-    new THREE.Vector3(0, 0, 0);
+  const start = level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)] || new THREE.Vector3(0, 0, 0);
   cat = new CatController(world, scene, input, start.clone());
   UI.hideBanner();
   bannerVisible = false;
@@ -132,10 +125,31 @@ function createLevel(n: number) {
   mice = [];
   const spec = specForLevel(n);
   required = spec.miceRequired;
+  // Create a no-spawn safe radius around the player's start so mice don't spawn too close
+  const safeRadius = 5.0; // meters
+  if (level.spawnPoints.length > 0) {
+    level.spawnPoints = level.spawnPoints.filter((p) => p.distanceTo(start) >= safeRadius);
+  }
+  const pickSpawnFarFrom = (origin: THREE.Vector3): THREE.Vector3 => {
+    // Prefer filtered spawnPoints if any remain
+    if (level.spawnPoints.length > 0) {
+      return level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)].clone();
+    }
+    // Fallback: sample points inside random rooms, away from origin
+    for (let tries = 0; tries < 40; tries++) {
+      const r = level.roomBoxes[Math.floor(Math.random() * level.roomBoxes.length)];
+      const margin = 0.6;
+      const x = THREE.MathUtils.lerp(r.min.x + margin, r.max.x - margin, Math.random());
+      const z = THREE.MathUtils.lerp(r.min.z + margin, r.max.z - margin, Math.random());
+      const p = new THREE.Vector3(x, 0, z);
+      if (p.distanceTo(origin) >= safeRadius) return p;
+    }
+    // Last resort: push a point away from origin
+    const dir = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5).normalize();
+    return new THREE.Vector3(origin.x + dir.x * (safeRadius + 1), 0, origin.z + dir.y * (safeRadius + 1));
+  };
   for (let i = 0; i < spec.mouseCount; i++) {
-    const p =
-      level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)] ||
-      new THREE.Vector3(0, 0, 0);
+    const p = pickSpawnFarFrom(start);
     const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), level.mouseHoles, sfx);
     mouse.speed = spec.mouseSpeed;
     mice.push(mouse);
@@ -159,6 +173,7 @@ window.addEventListener("resize", () => {
 let last = performance.now();
 let fpsTimer = 0,
   fpsFrames = 0;
+let roomTypeTimer = 0;
 function loop() {
   const now = performance.now();
   const dt = Math.min(0.033, (now - last) / 1000);
@@ -234,6 +249,13 @@ function loop() {
   // fps
   fpsTimer += dt;
   fpsFrames++;
+  // room type update
+  roomTypeTimer += dt;
+  if (roomTypeTimer >= 0.25) {
+    const t = level.getRoomTypeAtPosition(playerPos);
+    UI.setRoomType(t);
+    roomTypeTimer = 0;
+  }
   if (fpsTimer >= 0.5) {
     const fps = fpsFrames / fpsTimer;
     UI.setFPS(fps);

@@ -23,6 +23,10 @@ export const UI = {
     const el = document.getElementById("fps");
     if (el) el.textContent = v.toFixed(0);
   },
+  setRoomType(v: string) {
+    const el = document.getElementById("roomType");
+    if (el) el.textContent = v;
+  },
   showBanner(html: string) {
     const el = document.getElementById("banner") as HTMLElement | null;
     if (!el) return;

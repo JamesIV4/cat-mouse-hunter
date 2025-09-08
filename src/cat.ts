@@ -103,13 +103,10 @@ export class CatController {
         }
         // Prefer common names; fallbacks if not present
         const names = Object.keys(this.actions);
-        const findName = (alts: string[]) =>
-          names.find((n) => alts.some((k) => n.includes(k)));
-        this.actionByKind.idle =
-          findName(["idle", "stand"]) || names[0] || undefined;
+        const findName = (alts: string[]) => names.find((n) => alts.some((k) => n.includes(k)));
+        this.actionByKind.idle = findName(["idle", "stand"]) || names[0] || undefined;
         this.actionByKind.walk = findName(["walk"]) || this.actionByKind.idle;
-        this.actionByKind.run =
-          findName(["run", "jog", "sprint"]) || this.actionByKind.walk;
+        this.actionByKind.run = findName(["run", "jog", "sprint"]) || this.actionByKind.walk;
         // Start idle if available
         const start = this.actionByKind.idle;
         if (start && this.actions[start]) {
@@ -120,12 +117,7 @@ export class CatController {
     });
   }
 
-  update(
-    dt: number,
-    camera: THREE.PerspectiveCamera,
-    mice: THREE.Object3D[],
-    colliders: THREE.Object3D[] = []
-  ) {
+  update(dt: number, camera: THREE.PerspectiveCamera, mice: THREE.Object3D[], colliders: THREE.Object3D[] = []) {
     this.onGround = false;
     // Grounded check via cannon-es narrowphase contact equations
     const world = this.body.world as any;
@@ -161,16 +153,8 @@ export class CatController {
       if (Ray && RaycastResult) {
         const ray = new Ray();
         const result = new RaycastResult();
-        ray.from.set(
-          this.body.position.x,
-          this.body.position.y,
-          this.body.position.z
-        );
-        ray.to.set(
-          this.body.position.x,
-          this.body.position.y - 0.7,
-          this.body.position.z
-        );
+        ray.from.set(this.body.position.x, this.body.position.y, this.body.position.z);
+        ray.to.set(this.body.position.x, this.body.position.y - 0.7, this.body.position.z);
         ray.intersectWorld(this.body.world, {
           mode: Ray.ANY,
           result,
@@ -238,11 +222,7 @@ export class CatController {
     const speedBase = 12.0;
     const speedRun = speedBase * 1.75;
     const speedSneak = 2.0;
-    const speed = this.input.sneak
-      ? speedSneak
-      : this.input.run
-      ? speedRun
-      : speedBase;
+    const speed = this.input.sneak ? speedSneak : this.input.run ? speedRun : speedBase;
 
     if (this.onGround) {
       if (this.input.jump) {
@@ -265,11 +245,7 @@ export class CatController {
           this.body.velocity.z = vz + hz * add;
         }
       } else if (moving) {
-        this.state = this.input.sneak
-          ? "Sneak"
-          : this.input.run
-          ? "Run"
-          : "Walk";
+        this.state = this.input.sneak ? "Sneak" : this.input.run ? "Run" : "Walk";
       } else {
         this.state = "Idle";
       }
@@ -283,16 +259,8 @@ export class CatController {
       // find nearest mouse in front cone
       let best: THREE.Object3D | null = null;
       let bestDist = 999;
-      const pos = new THREE.Vector3(
-        this.body.position.x,
-        this.body.position.y,
-        this.body.position.z
-      );
-      const camDir = new THREE.Vector3(
-        Math.sin(this.camYaw),
-        0,
-        Math.cos(this.camYaw)
-      );
+      const pos = new THREE.Vector3(this.body.position.x, this.body.position.y, this.body.position.z);
+      const camDir = new THREE.Vector3(Math.sin(this.camYaw), 0, Math.cos(this.camYaw));
       for (const m of mice) {
         const d = m.position.distanceTo(pos);
         if (d < 8) {
@@ -324,11 +292,7 @@ export class CatController {
       const forwardDir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
       // Invert right vector so A/D match camera view intuitively
       const rightDir = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
-      dir
-        .copy(forwardDir)
-        .multiplyScalar(forward)
-        .add(rightDir.multiplyScalar(right))
-        .normalize();
+      dir.copy(forwardDir).multiplyScalar(forward).add(rightDir.multiplyScalar(right)).normalize();
 
       const v = this.body.velocity;
       if (this.onGround) {
@@ -352,11 +316,7 @@ export class CatController {
     }
 
     // Update visual
-    this.mesh.position.set(
-      this.body.position.x,
-      this.body.position.y - 0.45,
-      this.body.position.z
-    );
+    this.mesh.position.set(this.body.position.x, this.body.position.y - 0.45, this.body.position.z);
     if (dir.lengthSq() > 0.0001) {
       const targetRot = Math.atan2(dir.x, dir.z);
       const currentY = this.mesh.rotation.y;
@@ -377,11 +337,7 @@ export class CatController {
     }
 
     // Camera follow
-    const camTarget = new THREE.Vector3(
-      this.body.position.x,
-      this.body.position.y + 0.8,
-      this.body.position.z
-    );
+    const camTarget = new THREE.Vector3(this.body.position.x, this.body.position.y + 0.8, this.body.position.z);
     const camOffset = new THREE.Vector3(
       -Math.sin(this.camYaw) * this.camDist,
       0,
@@ -427,10 +383,7 @@ function loadCatModel(): Promise<THREE.Object3D> {
   if (!catModelPromise) {
     const loader = new FBXLoader();
     catModelPromise = new Promise((resolve, reject) => {
-      const url = new URL(
-        "../models/cat/cat.fbx",
-        import.meta.url
-      ).toString();
+      const url = new URL("../models/cat/cat.fbx", import.meta.url).toString();
       loader.load(
         url,
         (obj) => {
@@ -456,17 +409,13 @@ let catTexturePromise: Promise<THREE.Texture | null> | null = null;
 function loadCatTexture(): Promise<THREE.Texture | null> {
   if (!catTexturePromise) {
     catTexturePromise = new Promise((resolve) => {
-      const texUrl = new URL(
-        "../models/cat/cat.jpg",
-        import.meta.url
-      ).toString();
+      const texUrl = new URL("../models/cat/cat.jpg", import.meta.url).toString();
       const tl = new THREE.TextureLoader();
       tl.load(
         texUrl,
         (tex) => {
           try {
-            (tex as any).colorSpace =
-              (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+            (tex as any).colorSpace = (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
           } catch {}
           resolve(tex);
         },

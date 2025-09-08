@@ -17,12 +17,6 @@ export function clamp(v: number, a: number, b: number) {
   return Math.min(b, Math.max(a, v));
 }
 
-export function remap(
-  v: number,
-  a0: number,
-  b0: number,
-  a1: number,
-  b1: number
-) {
+export function remap(v: number, a0: number, b0: number, a1: number, b1: number) {
   return a1 + ((v - a0) * (b1 - a1)) / (b0 - a0);
 }

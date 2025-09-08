@@ -17,8 +17,7 @@ function loadStarTexture(): Promise<THREE.Texture> {
         url,
         (tex) => {
           try {
-            (tex as any).colorSpace =
-              (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+            (tex as any).colorSpace = (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
           } catch {}
           resolve(tex);
         },
@@ -36,7 +35,10 @@ export class ParticleSystem {
   private maxParticles = 400;
   private warmSprite: THREE.Sprite | null = null;
 
-  constructor(private world: CANNON.World, private scene: THREE.Scene) {
+  constructor(
+    private world: CANNON.World,
+    private scene: THREE.Scene
+  ) {
     loadStarTexture().then((tex) => {
       this.materialBase = new THREE.SpriteMaterial({
         map: tex,

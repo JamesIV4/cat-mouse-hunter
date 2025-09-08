@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -94,23 +94,18 @@
     <div class="hud" id="hud">
       <div class="title">Cat & Mouse Service</div>
       <div class="row">Level: <span id="level">1</span></div>
-      <div class="row">
-        Mice: <span id="caught">0</span>/<span id="required">5</span>
-      </div>
+      <div class="row">Mice: <span id="caught">0</span>/<span id="required">5</span></div>
       <div class="row">Remaining: <span id="remaining">0</span></div>
       <div class="row">State: <span id="state">Idle</span></div>
       <div class="row">FPS: <span id="fps">0</span></div>
+      <div class="row">Room: <span id="roomType">Unknown</span></div>
     </div>
     <div class="center-banner" id="banner"></div>
     <div class="controls">
-      <b>Controls:</b> WASD move • Space jump • Shift run • Ctrl sneak • E
-      pounce lock • Mouse pan camera • Mouse wheel zoom • R restart level • N
-      next level (when complete)
-      </div>
+      <b>Controls:</b> WASD move • Space jump • Shift run • Ctrl sneak • E pounce lock • Mouse pan camera • Mouse wheel
+      zoom • R restart level • N next level (when complete)
     </div>
-    <div class="lockHint" id="lockHint">
-      Click the game to enable mouse look
-    </div>
+    <div class="lockHint" id="lockHint">Click the game to enable mouse look</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

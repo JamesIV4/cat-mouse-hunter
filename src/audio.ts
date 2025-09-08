@@ -1,16 +1,7 @@
 // Pre-resolve SFX asset URLs so Vite includes them in the build
-const SFX_MOUSE_SQUEEK = new URL(
-  "../sfx/mouse-squeek.wav",
-  import.meta.url
-).toString();
-const SFX_MOUSE_DIE = new URL(
-  "../sfx/mouse-die.wav",
-  import.meta.url
-).toString();
-const SFX_CAT_TRILL = new URL(
-  "../sfx/cat-trill.wav",
-  import.meta.url
-).toString();
+const SFX_MOUSE_SQUEEK = new URL("../sfx/mouse-squeek.wav", import.meta.url).toString();
+const SFX_MOUSE_DIE = new URL("../sfx/mouse-die.wav", import.meta.url).toString();
+const SFX_CAT_TRILL = new URL("../sfx/cat-trill.wav", import.meta.url).toString();
 const SFX_CAT_PURR = new URL("../sfx/cat-pur.wav", import.meta.url).toString();
 
 export class Sound {
@@ -26,8 +17,7 @@ export class Sound {
 
   private ensure() {
     if (!this.ctx) {
-      const AC =
-        (window as any).AudioContext || (window as any).webkitAudioContext;
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
       if (!AC) return;
       this.ctx = new AC();
       this.master = this.ctx.createGain();

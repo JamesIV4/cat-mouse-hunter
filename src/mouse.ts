@@ -126,26 +126,15 @@ export class Mouse {
     this.wanderTimer -= dt;
     this.pathTimer -= dt;
     this.flipRetryTimer = Math.max(0, this.flipRetryTimer - dt);
-    const pos = new THREE.Vector3(
-      this.body.position.x,
-      0,
-      this.body.position.z
-    );
+    const pos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
     let dir = new THREE.Vector3();
 
     // Regular patrol: pick random waypoint when needed
-    const needNew =
-      !this.target || this.pathTimer <= 0 || this.target.distanceTo(pos) < 0.3;
+    const needNew = !this.target || this.pathTimer <= 0 || this.target.distanceTo(pos) < 0.3;
     if (needNew) {
       const margin = 0.4;
-      const tx = randRange(
-        this.bounds.min.x + margin,
-        this.bounds.max.x - margin
-      );
-      const tz = randRange(
-        this.bounds.min.z + margin,
-        this.bounds.max.z - margin
-      );
+      const tx = randRange(this.bounds.min.x + margin, this.bounds.max.x - margin);
+      const tz = randRange(this.bounds.min.z + margin, this.bounds.max.z - margin);
       this.target = new THREE.Vector3(tx, 0, tz);
       this.pathTimer = randRange(3.0, 7.0);
     }
@@ -176,16 +165,8 @@ export class Mouse {
       const step = randRange(1.2, 2.5);
       const b = this.bounds;
       const marginIn = 0.8;
-      const ntx = clamp(
-        pos.x + newDir.x * step,
-        b.min.x + marginIn,
-        b.max.x - marginIn
-      );
-      const ntz = clamp(
-        pos.z + newDir.z * step,
-        b.min.z + marginIn,
-        b.max.z - marginIn
-      );
+      const ntx = clamp(pos.x + newDir.x * step, b.min.x + marginIn, b.max.x - marginIn);
+      const ntz = clamp(pos.z + newDir.z * step, b.min.z + marginIn, b.max.z - marginIn);
       this.target = new THREE.Vector3(ntx, 0, ntz);
       dir.copy(newDir);
     }
@@ -228,11 +209,7 @@ export class Mouse {
     if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
       // Double seek radius when pursued to prefer holes sooner
       const seekRadius = pursued ? 12 : 6;
-      const myPos = new THREE.Vector3(
-        this.body.position.x,
-        0.5,
-        this.body.position.z
-      );
+      const myPos = new THREE.Vector3(this.body.position.x, 0.5, this.body.position.z);
       let nearest: {
         position: THREE.Vector3;
         inward: THREE.Vector3;
@@ -249,23 +226,16 @@ export class Mouse {
         }
       }
       if (nearest && bestD <= seekRadius) {
-        const aim = nearest.position
-          .clone()
-          .addScaledVector(nearest.inward, -0.1); // stop a tad in front of the hole
+        const aim = nearest.position.clone().addScaledVector(nearest.inward, -0.1); // stop a tad in front of the hole
         this.target = aim;
-        const flatPos = new THREE.Vector3(
-          this.body.position.x,
-          0,
-          this.body.position.z
-        );
+        const flatPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
         dir.copy(aim).sub(flatPos).normalize();
       }
     }
 
     // Stuck resolution: if not reaching speed along dir, flip one axis and try a new waypoint
     const v = this.body.velocity;
-    const along =
-      dir.lengthSq() > 0.0001 ? Math.max(0, v.x * dir.x + v.z * dir.z) : 0;
+    const along = dir.lengthSq() > 0.0001 ? Math.max(0, v.x * dir.x + v.z * dir.z) : 0;
     if (dir.lengthSq() > 0.0001) {
       if (along >= this.speed * 0.9) {
         this.slowTimer = 0;
@@ -279,16 +249,8 @@ export class Mouse {
           const step = randRange(1.2, 2.5);
           const b = this.bounds;
           const marginIn = 0.8;
-          const ntx = clamp(
-            pos.x + newDir.x * step,
-            b.min.x + marginIn,
-            b.max.x - marginIn
-          );
-          const ntz = clamp(
-            pos.z + newDir.z * step,
-            b.min.z + marginIn,
-            b.max.z - marginIn
-          );
+          const ntx = clamp(pos.x + newDir.x * step, b.min.x + marginIn, b.max.x - marginIn);
+          const ntz = clamp(pos.z + newDir.z * step, b.min.z + marginIn, b.max.z - marginIn);
           this.target = new THREE.Vector3(ntx, 0, ntz);
           this.flipRetryTimer = 0.1;
           this.slowTimer = 0;
@@ -304,11 +266,7 @@ export class Mouse {
 
     // Enter mouse hole if within a slim horizontal gate in front of the hole
     if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
-      const myPos = new THREE.Vector3(
-        this.body.position.x,
-        0,
-        this.body.position.z
-      );
+      const myPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
       let enteredFrom: {
         position: THREE.Vector3;
         inward: THREE.Vector3;
@@ -351,18 +309,13 @@ export class Mouse {
     this.wasPursued = pursued;
   }
 
-  private teleportFromHole(from: {
-    position: THREE.Vector3;
-    inward: THREE.Vector3;
-    room: THREE.Box3;
-  }) {
+  private teleportFromHole(from: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) {
     // Choose a random destination hole (could be same if only one exists)
     const pool = this.holes;
     let dest = pool[Math.floor(Math.random() * pool.length)];
     if (pool.length > 1) {
       // try to avoid picking the same hole when possible
-      for (let i = 0; i < 4 && dest === from; i++)
-        dest = pool[Math.floor(Math.random() * pool.length)];
+      for (let i = 0; i < 4 && dest === from; i++) dest = pool[Math.floor(Math.random() * pool.length)];
     }
     // Begin in-hole travel: hide, freeze, and schedule exit after 0.25s
     this.inHoleTimer = 0.25;
@@ -382,11 +335,7 @@ export class Mouse {
     const a = (deg * Math.PI) / 180;
     const cos = Math.cos(a),
       sin = Math.sin(a);
-    const d = new THREE.Vector3(
-      inward.x * cos + inward.z * sin,
-      0,
-      inward.z * cos - inward.x * sin
-    ).normalize();
+    const d = new THREE.Vector3(inward.x * cos + inward.z * sin, 0, inward.z * cos - inward.x * sin).normalize();
     const burst = this.speed * 1.5;
     this.body.velocity.x = d.x * burst;
     this.body.velocity.z = d.z * burst;
@@ -397,11 +346,7 @@ export class Mouse {
     this.holeIgnoreTimer = 2.0;
   }
 
-  private performHoleExit(dest: {
-    position: THREE.Vector3;
-    inward: THREE.Vector3;
-    room: THREE.Box3;
-  }) {
+  private performHoleExit(dest: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) {
     // Spawn a bit inside the room in front of the destination hole
     const inward = dest.inward.clone().setY(0).normalize();
     const offset = 0.6; // meters inside the room
@@ -414,11 +359,7 @@ export class Mouse {
     const a = (deg * Math.PI) / 180;
     const cos = Math.cos(a),
       sin = Math.sin(a);
-    const d = new THREE.Vector3(
-      inward.x * cos + inward.z * sin,
-      0,
-      inward.z * cos - inward.x * sin
-    ).normalize();
+    const d = new THREE.Vector3(inward.x * cos + inward.z * sin, 0, inward.z * cos - inward.x * sin).normalize();
     const burst = this.speed * 1.5;
     this.body.velocity.x = d.x * burst;
     this.body.velocity.z = d.z * burst;
@@ -441,10 +382,7 @@ function loadRatModel(): Promise<THREE.Object3D> {
   if (!mouseModelPromise) {
     const loader = new FBXLoader();
     mouseModelPromise = new Promise((resolve, reject) => {
-      const url = new URL(
-        "../models/mouse/mouse-exported.fbx",
-        import.meta.url
-      ).toString();
+      const url = new URL("../models/mouse/mouse-exported.fbx", import.meta.url).toString();
       loader.load(
         url,
         (obj) => {
@@ -469,17 +407,13 @@ let mouseTexturePromise: Promise<THREE.Texture | null> | null = null;
 function loadMouseTexture(): Promise<THREE.Texture | null> {
   if (!mouseTexturePromise) {
     mouseTexturePromise = new Promise((resolve) => {
-      const texUrl = new URL(
-        "../models/mouse/mouse.png",
-        import.meta.url
-      ).toString();
+      const texUrl = new URL("../models/mouse/mouse.png", import.meta.url).toString();
       const tl = new THREE.TextureLoader();
       tl.load(
         texUrl,
         (tex) => {
           try {
-            (tex as any).colorSpace =
-              (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+            (tex as any).colorSpace = (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
           } catch {}
           resolve(tex);
         },
