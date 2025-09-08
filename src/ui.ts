@@ -180,6 +180,10 @@ export function enableMobileControls(input: Input) {
   let joyTouchId: number | null = null;
   let joyCenterX = 0;
   let joyCenterY = 0;
+  // Camera look touch (right side)
+  let lookTouchId: number | null = null;
+  let lookLastX = 0;
+  let lookLastY = 0;
 
   function updateVirtualStick(dx: number, dy: number) {
     // Convert pixels to -1..1 range within radius
@@ -213,15 +217,36 @@ export function enableMobileControls(input: Input) {
     }
   };
   const onTouchMove = (e: TouchEvent) => {
-    if (joyTouchId === null) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const t = e.changedTouches[i];
-      if (t.identifier === joyTouchId) {
-        const dx = t.clientX - joyCenterX;
-        const dy = t.clientY - joyCenterY;
-        updateVirtualStick(dx, dy);
-        e.preventDefault();
-        break;
+    // Joystick update
+    if (joyTouchId !== null) {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (t.identifier === joyTouchId) {
+          const dx = t.clientX - joyCenterX;
+          const dy = t.clientY - joyCenterY;
+          updateVirtualStick(dx, dy);
+          e.preventDefault();
+          break;
+        }
+      }
+    }
+    // Camera look update
+    if (lookTouchId !== null) {
+      // Find current position of the look touch from active touches (not just changed)
+      for (let i = 0; i < e.touches.length; i++) {
+        const t = e.touches[i];
+        if (t.identifier === lookTouchId) {
+          const dx = t.clientX - lookLastX;
+          const dy = t.clientY - lookLastY;
+          lookLastX = t.clientX;
+          lookLastY = t.clientY;
+          // Feed movement into mouse delta for camera control
+          const TOUCH_LOOK_SENS = 1.75; // 1.75x more sensitive
+          input.mouseDelta.x += dx * TOUCH_LOOK_SENS;
+          input.mouseDelta.y += dy * TOUCH_LOOK_SENS;
+          e.preventDefault();
+          break;
+        }
       }
     }
   };
@@ -234,11 +259,20 @@ export function enableMobileControls(input: Input) {
     joyKnob.style.top = "50%";
   };
   const onTouchEnd = (e: TouchEvent) => {
-    if (joyTouchId === null) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === joyTouchId) {
-        endStick();
-        break;
+    if (joyTouchId !== null) {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === joyTouchId) {
+          endStick();
+          break;
+        }
+      }
+    }
+    if (lookTouchId !== null) {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === lookTouchId) {
+          lookTouchId = null;
+          break;
+        }
       }
     }
   };
@@ -263,6 +297,8 @@ export function enableMobileControls(input: Input) {
     if (rects) {
       for (let i = 0; i < touches.length; i++) {
         const t = touches[i];
+        // Ignore the active camera-look touch when evaluating buttons
+        if (lookTouchId !== null && t.identifier === lookTouchId) continue;
         const x = t.clientX;
         const y = t.clientY;
         if (pointInRect(x, y, rects.jump)) jump = true;
@@ -279,10 +315,33 @@ export function enableMobileControls(input: Input) {
   };
   window.addEventListener("resize", () => (rects = null));
 
+  // Decide if a right-side touch should control camera look (not on a button, banner hidden)
+  const maybeBeginLook = (t: Touch) => {
+    if (lookTouchId !== null) return false;
+    const x = t.clientX;
+    const y = t.clientY;
+    const rightHalf = x >= window.innerWidth * 0.5;
+    const banner = document.getElementById("banner") as HTMLElement | null;
+    const bannerVisible = !!banner && banner.style.display !== "none";
+    if (!rightHalf || bannerVisible) return false;
+    if (!rects) refreshRects();
+    if (rects && (pointInRect(x, y, rects.jump) || pointInRect(x, y, rects.sprint))) return false;
+    lookTouchId = t.identifier;
+    lookLastX = x;
+    lookLastY = y;
+    return true;
+  };
+
   // Global listeners (pointerEvents none on container, so bind on document)
   document.addEventListener("touchstart", (e) => {
     onTouchStart(e);
     updateButtonsFromTouches(e.touches, e);
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      if (maybeBeginLook(t)) {
+        e.preventDefault();
+      }
+    }
   }, { passive: false });
   document.addEventListener("touchmove", (e) => {
     onTouchMove(e);

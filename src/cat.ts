@@ -208,10 +208,13 @@ export class CatController {
     }
 
     const mouseDelta = this.input.consumeMouseDelta();
-    const lookSpeed = 0.002 * this.input.sensitivity;
+    // Increase overall camera look sensitivity by 50%
+    const lookSpeed = 0.003 * this.input.sensitivity;
     this.camYaw -= mouseDelta.x * lookSpeed;
     this.camPitch -= mouseDelta.y * lookSpeed;
-    this.camPitch = clamp(this.camPitch, -1.3, 0.3);
+    // Further relax vertical look by ~50% more (both directions)
+    // Previous: [-2.2, 0.45] ⇒ New: approx [-2.86, 1.11]
+    this.camPitch = clamp(this.camPitch, -2.86, 1.11);
     this.camDist = clamp(this.camDist + this.input.consumeWheelDelta(), 3, 12);
 
     // Determine desired movement in local camera space
