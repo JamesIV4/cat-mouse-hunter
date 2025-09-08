@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CANNON } from "./physics";
-import { placePropAgainstWallOnce } from "./props";
+import { placePropAgainstWallOnce, placePropAt } from "./props";
 import { randRange, choice } from "./utils";
 
 export type LevelSpec = {
@@ -933,77 +933,12 @@ export class Level {
       }
     }
 
-    // Procedural couch model built from simple primitives
-    const makeCouch = (length: number, depth = 0.9, height = 0.8) => {
-      const group = new THREE.Group();
-      const fabric = new THREE.MeshStandardMaterial({
-        color: 0x6b7a8f,
-        roughness: 0.9,
-      });
-      const fabric2 = new THREE.MeshStandardMaterial({
-        color: 0x5c6a7a,
-        roughness: 0.9,
-      });
-      const wood = new THREE.MeshStandardMaterial({
-        color: 0x775533,
-        roughness: 0.7,
-        metalness: 0.0,
-      });
+    // (Removed) Procedural couch model; we now place couch props instead
 
-      const seatH = 0.4;
-      const backH = height - seatH;
-      const armW = Math.min(0.18, Math.max(0.12, length * 0.08));
-      const legH = 0.1;
-
-      // Base frame (thin wood under seat)
-      const base = new THREE.Mesh(new THREE.BoxGeometry(length, 0.08, depth), wood);
-      base.position.set(0, 0.08 / 2 + legH, 0);
-      base.castShadow = base.receiveShadow = true;
-      group.add(base);
-
-      // Seat cushion (slightly rounded via segments)
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(length - armW * 2, seatH, depth - 0.06, 2, 1, 2), fabric);
-      seat.position.set(0, legH + 0.08 + seatH / 2, 0);
-      seat.castShadow = seat.receiveShadow = true;
-      group.add(seat);
-
-      // Backrest
-      const back = new THREE.Mesh(new THREE.BoxGeometry(length - armW * 2, backH, 0.12), fabric2);
-      back.position.set(0, legH + 0.08 + seatH + backH / 2, -(depth / 2) + 0.06);
-      back.castShadow = back.receiveShadow = true;
-      group.add(back);
-
-      // Armrests
-      const armL = new THREE.Mesh(new THREE.BoxGeometry(armW, height, depth), fabric2);
-      armL.position.set(-(length / 2) + armW / 2, legH + height / 2, 0);
-      const armR = armL.clone();
-      armR.position.x = length / 2 - armW / 2;
-      group.add(armL, armR);
-
-      // Seat cushions detail (two or three depending on length)
-      const cushionCount = length > 2.4 ? 3 : 2;
-      for (let i = 0; i < cushionCount; i++) {
-        const w = (length - armW * 2 - 0.06 * (cushionCount + 1)) / cushionCount;
-        const c = new THREE.Mesh(new THREE.BoxGeometry(w, seatH * 0.95, depth - 0.08, 2, 1, 2), fabric);
-        c.position.set(-(length / 2 - armW) + 0.06 + w / 2 + i * (w + 0.06), legH + 0.08 + seatH / 2 + 0.01, 0.01);
-        c.castShadow = c.receiveShadow = true;
-        group.add(c);
-      }
-
-      // Legs
-      const legGeo = new THREE.CylinderGeometry(0.035, 0.035, legH, 8);
-      const leg1 = new THREE.Mesh(legGeo, wood);
-      const leg2 = leg1.clone();
-      const leg3 = leg1.clone();
-      const leg4 = leg1.clone();
-      leg1.position.set(-length / 2 + 0.08, legH / 2, -depth / 2 + 0.08);
-      leg2.position.set(length / 2 - 0.08, legH / 2, -depth / 2 + 0.08);
-      leg3.position.set(-length / 2 + 0.08, legH / 2, depth / 2 - 0.08);
-      leg4.position.set(length / 2 - 0.08, legH / 2, depth / 2 - 0.08);
-      group.add(leg1, leg2, leg3, leg4);
-
-      return group;
-    };
+    // Couch prop parameters (approximate dimensions in meters)
+    const COUCH_LEN = 3;
+    const COUCH_DEP = 2;
+    const COUCH_H = 2;
 
     // Helpers to keep couches clear of doorways
     const wouldBlockDoor = (
@@ -1100,21 +1035,17 @@ export class Level {
       return false;
     };
 
-    const placeCouchAlongWall = (room: THREE.Box3, openings: THREE.Vector3[]): number => {
-      // 1.5x larger couch
-      const scale = 1.5;
-      // Bigger rooms tend to get bigger couches
+    const placeCouchAlongWall = (
+      room: THREE.Box3,
+      openings: THREE.Vector3[]
+    ): { placed: boolean; x?: number; z?: number; yaw?: number } => {
+      // Use fixed-size couch prop for placement decisions
       const roomSize = new THREE.Vector3().subVectors(room.max, room.min);
       const longSpan = Math.max(roomSize.x, roomSize.z);
-      const sizeFactor = THREE.MathUtils.clamp((longSpan - 4) / 8, 0, 1); // span 4..12 -> 0..1
-      const length = (randRange(1.6, 3.2) + sizeFactor * randRange(0.4, 1.0)) * scale;
-      const depth = (randRange(0.8, 1.0) + sizeFactor * randRange(0.0, 0.2)) * scale;
-      const height = 0.8 * scale;
-      const couch = makeCouch(length, depth, height);
-      couch.traverse((o) => {
-        (o as any).castShadow = true;
-        (o as any).receiveShadow = true;
-      });
+      const sizeFactor = THREE.MathUtils.clamp((longSpan - 4) / 8, 0, 1); // keep for later logic
+      const length = COUCH_LEN;
+      const depth = COUCH_DEP;
+      const height = COUCH_H;
 
       // choose a wall: 0=N(max z),1=S(min z),2=E(max x),3=W(min x)
       const wall = Math.floor(Math.random() * 4);
@@ -1170,177 +1101,31 @@ export class Level {
             break;
           }
         }
-        if (!foundPos) return 0;
+        if (!foundPos) return { placed: false };
       }
 
-      couch.position.set(x, 0, z);
-      couch.rotation.y = yaw;
       // doorway corridor check for main couch
-      if (wouldBlockDoorCorridor(room, openings, x, z, yaw, length, depth)) return 0;
-      this.scene.add(couch);
-      this.meshes.push(couch);
+      if (wouldBlockDoorCorridor(room, openings, x, z, yaw, length, depth)) return { placed: false };
+      // Place couch prop (visual) with auto static collider
+      const yawDeg = (yaw * 180) / Math.PI;
+      placePropAt(this.world, this.scene, {
+        modelUrl: "../models/couch/couch.fbx",
+        textureUrl: "../models/couch/couch.jpg",
+        textureBrightness: 2,
+        targetHeight: height,
+        position: new THREE.Vector3(x, 0, z),
+        yawDeg,
+        collidable: false,
+        tag: "couch",
+        onPlaced: (mesh, body) => {
+          this.meshes.push(mesh);
+        },
+      });
       // record main couch footprint
       const halfXMain = Math.abs(Math.sin(yaw)) > 0.5 ? depth / 2 : length / 2;
       const halfZMain = Math.abs(Math.sin(yaw)) > 0.5 ? length / 2 : depth / 2;
       couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
-      // record main couch footprint
-      {
-        const halfXMain = Math.abs(Math.sin(yaw)) > 0.5 ? depth / 2 : length / 2;
-        const halfZMain = Math.abs(Math.sin(yaw)) > 0.5 ? length / 2 : depth / 2;
-        couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
-      }
-
-      // Physics proxies for couch: seat slab + backrest (better alignment/grounding)
-      const legH = 0.1;
-      const baseThick = 0.08;
-      const seatH = 0.4;
-      const backH = height - seatH;
-      const armW = Math.min(0.18 * (length / (length || 1)), Math.max(0.12, length * 0.08));
-      const seatTopY = legH + baseThick + seatH; // top surface of the seating area
-
-      const body = new CANNON.Body({ mass: 0 });
-      // 1) Seat slab (thin, matches top surface for correct grounding)
-      {
-        const seatWidth = Math.max(0.2, length - armW * 2);
-        const seatDepth = Math.max(0.2, depth - 0.06);
-        const seatThickness = 0.12; // thin slab for collision; keeps top aligned with visuals
-        const seatShape = new CANNON.Box(new CANNON.Vec3(seatWidth / 2, seatThickness / 2, seatDepth / 2));
-        // Center the slab so that its top is at seatTopY
-        const seatOffset = new CANNON.Vec3(0, seatTopY - seatThickness / 2, 0);
-        body.addShape(seatShape, seatOffset as any);
-      }
-      // 2) Backrest blocker (thin tall box at the back so you can't clip through)
-      {
-        const backWidth = Math.max(0.2, length - armW * 2);
-        const backThickness = 0.12;
-        const backShape = new CANNON.Box(new CANNON.Vec3(backWidth / 2, Math.max(0.1, backH) / 2, backThickness / 2));
-        const backCenterY = legH + baseThick + seatH + Math.max(0.1, backH) / 2;
-        const backOffset = new CANNON.Vec3(0, backCenterY, -(depth / 2) + backThickness / 2 + 0.06);
-        body.addShape(backShape, backOffset as any);
-      }
-      // Position and rotate compound body to match the mesh
-      body.position.set(x, 0, z);
-      if (couch.rotation.y !== 0) body.quaternion.setFromEuler(0, couch.rotation.y, 0);
-      // Tag as couch for gameplay grounding checks
-      (body as any).isCouch = true;
-      this.world.addBody(body);
-      this.bodies.push(body);
-      let placedCount = 1;
-
-      // Chance to add a perpendicular couch forming an L shape in larger rooms
-      if (longSpan > 6 && Math.random() < 0.5 + sizeFactor * 0.3) {
-        const secondaryScale = 1.0 + sizeFactor * 0.5;
-        const len2 = randRange(1.2, 2.4) * secondaryScale * scale;
-        const dep2 = randRange(0.75, 0.95) * secondaryScale * scale;
-        const h2 = height;
-        const couch2 = makeCouch(len2, dep2, h2);
-        couch2.traverse((o) => {
-          (o as any).castShadow = true;
-          (o as any).receiveShadow = true;
-        });
-
-        // Compute local axes for main couch
-        const R = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)); // length axis
-        const F = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)); // forward (into room)
-        const innerCorner = (endSign: number) => x + 0; // placeholder
-        const cornerPos = (endSign: number) =>
-          new THREE.Vector3()
-            .copy(new THREE.Vector3(x, 0, z))
-            .add(R.clone().multiplyScalar((endSign * length) / 2))
-            .add(F.clone().multiplyScalar(depth / 2));
-        const gap = 0.06;
-
-        let placed = false;
-        for (const endSign of [1, -1]) {
-          const pCorner = cornerPos(endSign);
-          // Desired forward for the L leg: point toward inside of L (toward main couch center)
-          const Fdesired = R.clone().multiplyScalar(-endSign).normalize();
-          const candYaw = [yaw + Math.PI / 2, yaw - Math.PI / 2];
-          // Choose yaw2 so that its forward best matches Fdesired
-          let yaw2 = candYaw[0];
-          let bestDot = -1e9;
-          for (const y of candYaw) {
-            const Ftest = new THREE.Vector3(Math.sin(y), 0, Math.cos(y));
-            const d = Ftest.dot(Fdesired);
-            if (d > bestDot) {
-              bestDot = d;
-              yaw2 = y;
-            }
-          }
-          const R2 = new THREE.Vector3(Math.cos(yaw2), 0, -Math.sin(yaw2));
-          const F2 = new THREE.Vector3(Math.sin(yaw2), 0, Math.cos(yaw2));
-
-          // Try both choices of which length end of couch2 is the inner corner
-          for (const s of [1, -1]) {
-            const targetCorner = pCorner.clone().sub(F.clone().multiplyScalar(gap));
-            const c2 = targetCorner
-              .clone()
-              .sub(R2.clone().multiplyScalar((s * len2) / 2 + gap))
-              .sub(F2.clone().multiplyScalar(dep2 / 2 + gap));
-
-            // Bounds and doorway corridor checks
-            if (c2.x - len2 / 2 < room.min.x + 0.5 || c2.x + len2 / 2 > room.max.x - 0.5) continue;
-            if (c2.z - dep2 / 2 < room.min.z + 0.5 || c2.z + dep2 / 2 > room.max.z - 0.5) continue;
-            if (wouldBlockDoorCorridor(room, openings, c2.x, c2.z, yaw2, len2, dep2)) continue;
-
-            // avoid intersecting existing couches
-            {
-              const halfX2 = Math.abs(Math.sin(yaw2)) > 0.5 ? dep2 / 2 : len2 / 2;
-              const halfZ2 = Math.abs(Math.sin(yaw2)) > 0.5 ? len2 / 2 : dep2 / 2;
-              if (rectIntersects(c2.x, c2.z, halfX2, halfZ2)) continue;
-              couch2.position.set(c2.x, 0, c2.z);
-              couch2.rotation.y = yaw2;
-              this.scene.add(couch2);
-              this.meshes.push(couch2);
-              // Secondary (L) couch: use same improved seat/back proxies
-              const legH2 = 0.1;
-              const baseThick2 = 0.08;
-              const seatH2 = 0.4;
-              const backH2 = h2 - seatH2;
-              const armW2 = Math.min(0.18 * (len2 / (len2 || 1)), Math.max(0.12, len2 * 0.08));
-              const seatTopY2 = legH2 + baseThick2 + seatH2;
-              const body2 = new CANNON.Body({ mass: 0 });
-              // Seat slab
-              {
-                const seatWidth2 = Math.max(0.2, len2 - armW2 * 2);
-                const seatDepth2 = Math.max(0.2, dep2 - 0.06);
-                const seatThickness2 = 0.12;
-                const seatShape2 = new CANNON.Box(new CANNON.Vec3(seatWidth2 / 2, seatThickness2 / 2, seatDepth2 / 2));
-                const seatOffset2 = new CANNON.Vec3(0, seatTopY2 - seatThickness2 / 2, 0);
-                body2.addShape(seatShape2, seatOffset2 as any);
-              }
-              // Backrest blocker
-              {
-                const backWidth2 = Math.max(0.2, len2 - armW2 * 2);
-                const backThickness2 = 0.12;
-                const backShape2 = new CANNON.Box(
-                  new CANNON.Vec3(backWidth2 / 2, Math.max(0.1, backH2) / 2, backThickness2 / 2)
-                );
-                const backCenterY2 = legH2 + baseThick2 + seatH2 + Math.max(0.1, backH2) / 2;
-                const backOffset2 = new CANNON.Vec3(0, backCenterY2, -(dep2 / 2) + backThickness2 / 2 + 0.06);
-                body2.addShape(backShape2, backOffset2 as any);
-              }
-              body2.position.set(c2.x, 0, c2.z);
-              if (yaw2 !== 0) body2.quaternion.setFromEuler(0, yaw2, 0);
-              // Tag as couch for gameplay grounding checks
-              (body2 as any).isCouch = true;
-              this.world.addBody(body2);
-              this.bodies.push(body2);
-              couchRects.push({
-                x: c2.x,
-                z: c2.z,
-                halfX: halfX2,
-                halfZ: halfZ2,
-              });
-              placed = true;
-              placedCount += 1;
-              break;
-            }
-          }
-          if (placed) break;
-        }
-      }
-      return placedCount;
+      return { placed: true, x, z, yaw };
     };
 
     for (let ri = 0; ri < rooms.length; ri++) {
@@ -1352,22 +1137,54 @@ export class Level {
       // First stochastic pass
       // Accumulator defined after loop
     }
-    // Restrict couches to Living Room or Family Room only
+    // Restrict couches to Living Room or Family Room only; place using wall/adjacent utilities
     const eligibleIdxs = this.roomLabels
       .map((lab, i) => ({ lab, i }))
       .filter(({ lab }) => lab === "Living Room" || lab === "Family Room")
       .map(({ i }) => i);
-    // Ensure a minimum couches per house only if eligible rooms exist
-    const minCouches = eligibleIdxs.length > 0 ? (Math.random() < 0.5 ? 1 : 2) : 0;
-    let totalCouches = 0;
     for (const ri of eligibleIdxs) {
-      if (Math.random() < 0.7) totalCouches += placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
-      if (Math.random() < 0.35) totalCouches += placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
-    }
-    let safety = 50;
-    while (eligibleIdxs.length > 0 && totalCouches < minCouches && safety-- > 0) {
-      const idx = eligibleIdxs[Math.floor(Math.random() * eligibleIdxs.length)];
-      totalCouches += placeCouchAlongWall(rooms[idx], roomOpenings[idx]);
+      const main = placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
+      // Optional L-shaped second couch
+      if (main.placed && Math.random() < 0.35) {
+        const s = Math.random() < 0.5 ? 1 : -1;
+        const yaw = main.yaw!;
+        const R = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+        const pos = new THREE.Vector3(main.x!, 0, main.z!);
+        const gap = 0.06;
+        const c2 = pos.clone().add(R.clone().multiplyScalar(s * (COUCH_LEN / 2 + COUCH_DEP / 2 + gap)));
+        const yaw2 = yaw + (s * Math.PI) / 2;
+        // Bounds and door corridor checks
+        if (
+          c2.x - COUCH_LEN / 2 >= rooms[ri].min.x + 0.5 &&
+          c2.x + COUCH_LEN / 2 <= rooms[ri].max.x - 0.5 &&
+          c2.z - COUCH_DEP / 2 >= rooms[ri].min.z + 0.5 &&
+          c2.z + COUCH_DEP / 2 <= rooms[ri].max.z - 0.5 &&
+          !rectIntersects(
+            c2.x,
+            c2.z,
+            Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_DEP / 2 : COUCH_LEN / 2,
+            Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_LEN / 2 : COUCH_DEP / 2
+          ) &&
+          !wouldBlockDoorCorridor(rooms[ri], roomOpenings[ri], c2.x, c2.z, yaw2, COUCH_LEN, COUCH_DEP)
+        ) {
+          placePropAt(this.world, this.scene, {
+            modelUrl: "../models/couch/couch.fbx",
+            textureUrl: "../models/couch/couch.jpg",
+            textureBrightness: 1,
+            targetHeight: COUCH_H,
+            position: c2,
+            yawDeg: (yaw2 * 180) / Math.PI,
+            collidable: true,
+            tag: "couch",
+            onPlaced: (mesh, body) => {
+              this.meshes.push(mesh);
+            },
+          });
+          const halfX2 = Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_DEP / 2 : COUCH_LEN / 2;
+          const halfZ2 = Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_LEN / 2 : COUCH_DEP / 2;
+          couchRects.push({ x: c2.x, z: c2.z, halfX: halfX2, halfZ: halfZ2 });
+        }
+      }
     }
 
     // After couches are placed, remove any gameplay holes that are behind couches

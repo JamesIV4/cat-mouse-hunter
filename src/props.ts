@@ -51,12 +51,22 @@ export function loadOBJCached(modelUrl: string): Promise<THREE.Object3D> {
 }
 
 /** Load a model by extension (FBX or OBJ) and cache results by URL. */
-export function loadModelCached(modelUrl: string): Promise<THREE.Object3D> {
+export function loadModelCached(modelUrl: string, textureUrl?: string): Promise<THREE.Object3D> {
   const lower = modelUrl.toLowerCase();
-  if (lower.endsWith(".fbx")) return loadFBXCached(modelUrl);
-  if (lower.endsWith(".obj")) return loadOBJCached(modelUrl);
-  // Fallback: try FBX first
-  return loadFBXCached(modelUrl);
+  const basePromise = lower.endsWith(".obj") ? loadOBJCached(modelUrl) : loadFBXCached(modelUrl);
+  if (!textureUrl) return basePromise;
+  return Promise.all([basePromise, loadTextureCached(textureUrl).catch(() => null)])
+    .then(([model, tex]) => {
+      if (tex) {
+        model.traverse((o: any) => {
+          if (o && o.isMesh && o.material && "map" in o.material) {
+            o.material.map = tex;
+            if ("needsUpdate" in o.material) o.material.needsUpdate = true;
+          }
+        });
+      }
+      return model;
+    });
 }
 
 export type PlacePropOpts = {
@@ -81,6 +91,15 @@ export type PlacePropOpts = {
    * Extra yaw (degrees) added to the inward-facing orientation. Positive rotates CCW when viewed from above.
    */
   yawOffset?: number;
+  /**
+   * Optional texture URL to apply as a diffuse map to all meshes in the model.
+   */
+  textureUrl?: string;
+  /**
+   * Optional brightness multiplier applied via material color.
+   * 1 = unchanged, <1 darker, >1 brighter. Default 1.
+   */
+  textureBrightness?: number;
   /**
    * Multiplier (0..1] that shrinks the collider half-extents computed from the model's bounding box. Default 0.9.
    */
@@ -157,7 +176,7 @@ export function placePropAgainstWallOnce(
   const epsEdge = 1e-3;
   const startEdge = Math.floor(Math.random() * 4);
 
-  loadModelCached(opts.modelUrl).then((base) => {
+  loadModelCached(opts.modelUrl, opts.textureUrl).then((base) => {
     for (let k = 0; k < 4; k++) {
       const [a, b] = edges[(startEdge + k) % 4];
       const dir = new THREE.Vector3().subVectors(b, a);
@@ -216,10 +235,20 @@ export function placePropAgainstWallOnce(
         // Shadows
         const cast = opts.castShadow ?? true;
         const recv = opts.receiveShadow ?? true;
+        const brightness = typeof opts.textureBrightness === "number" ? opts.textureBrightness : 1;
         inst.traverse((o: any) => {
           if (o && o.isMesh) {
             o.castShadow = cast;
             o.receiveShadow = recv;
+            if (brightness !== 1 && o.material) {
+              const mats = Array.isArray(o.material) ? o.material : [o.material];
+              for (const m of mats) {
+                if (m && "color" in m && m.color && typeof m.color.multiplyScalar === "function") {
+                  m.color.multiplyScalar(brightness);
+                  if ("needsUpdate" in m) (m as any).needsUpdate = true;
+                }
+              }
+            }
           }
         });
         const box = new THREE.Box3().setFromObject(inst);
@@ -256,4 +285,125 @@ export function placePropAgainstWallOnce(
     // If we got here, we didn't find a valid spot; still notify if needed with mesh but no body
     if (opts.onPlaced) opts.onPlaced(new THREE.Object3D(), null);
   });
+}
+
+// Texture cache and loader
+const textureCache = new Map<string, Promise<THREE.Texture>>();
+export function loadTextureCached(url: string): Promise<THREE.Texture> {
+  const key = url;
+  if (!textureCache.has(key)) {
+    const abs = new URL(url, import.meta.url).toString();
+    const p = new Promise<THREE.Texture>((resolve, reject) => {
+      const tl = new THREE.TextureLoader();
+      tl.load(
+        abs,
+        (tex) => {
+          try {
+            (tex as any).colorSpace = (THREE as any).SRGBColorSpace ?? (THREE as any).sRGBEncoding;
+          } catch {}
+          resolve(tex);
+        },
+        undefined,
+        (err) => reject(err)
+      );
+    });
+    textureCache.set(key, p);
+  }
+  return textureCache.get(key)!;
+}
+
+export type PlaceAtOpts = PlacePropOpts & {
+  position: THREE.Vector3;
+  yawDeg?: number; // world yaw in degrees
+  y?: number; // override vertical placement (defaults to ground by bbox)
+};
+
+// Place a model at a given world position and yaw (degrees). Creates a static collider unless collidable === false.
+export function placePropAt(
+  world: CANNON.World,
+  scene: THREE.Scene,
+  opts: PlaceAtOpts
+) {
+  loadModelCached(opts.modelUrl, opts.textureUrl).then((base) => {
+    const inst = base.clone(true);
+    // Normalize to target height and custom scale
+    if (opts.targetHeight && opts.targetHeight > 0) {
+      const preBox = new THREE.Box3().setFromObject(inst);
+      const preSize = new THREE.Vector3();
+      preBox.getSize(preSize);
+      const factor = preSize.y > 0 ? opts.targetHeight / preSize.y : 1;
+      inst.scale.setScalar(factor);
+    }
+    if (typeof opts.scale === "number") inst.scale.multiplyScalar(opts.scale);
+    else if (opts.scale && typeof opts.scale === "object") inst.scale.set(opts.scale.x, opts.scale.y, opts.scale.z);
+
+    // Shadows and optional texture
+    const cast = opts.castShadow ?? true;
+    const recv = opts.receiveShadow ?? true;
+    const brightness = typeof opts.textureBrightness === "number" ? opts.textureBrightness : 1;
+    inst.traverse((o: any) => {
+      if (o && o.isMesh) {
+        o.castShadow = cast;
+        o.receiveShadow = recv;
+        if (brightness !== 1 && o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            if (m && "color" in m && m.color && typeof m.color.multiplyScalar === "function") {
+              m.color.multiplyScalar(brightness);
+              if ("needsUpdate" in m) (m as any).needsUpdate = true;
+            }
+          }
+        }
+      }
+    });
+
+    // Position and yaw
+    // Ground to y=0 unless y override provided
+    const box = new THREE.Box3().setFromObject(inst);
+    const minY = box.min.y;
+    inst.position.copy(opts.position);
+    if (typeof opts.y === "number") inst.position.y = opts.y;
+    else inst.position.y -= minY;
+    const yaw = THREE.MathUtils.degToRad(opts.yawDeg ?? 0) + THREE.MathUtils.degToRad(opts.yawOffset ?? 0);
+    inst.rotation.y = yaw;
+    scene.add(inst);
+
+    // Collider
+    let body: CANNON.Body | null = null;
+    if (opts.collidable !== false) {
+      inst.updateMatrixWorld(true);
+      const wbb = new THREE.Box3().setFromObject(inst);
+      const size = new THREE.Vector3();
+      wbb.getSize(size);
+      const center = wbb.getCenter(new THREE.Vector3());
+      const shrink = opts.shrink ?? 0.9;
+      const hx = Math.max(0.05, (size.x * shrink) / 2);
+      const hy = Math.max(0.1, (size.y * shrink) / 2);
+      const hz = Math.max(0.05, (size.z * shrink) / 2);
+      const shape = new CANNON.Box(new CANNON.Vec3(hx, hy, hz));
+      body = new CANNON.Body({ mass: 0, shape });
+      body.position.set(center.x, center.y, center.z);
+      body.quaternion.setFromEuler(0, yaw, 0);
+      if (opts.tag) (body as any)[`is${opts.tag[0].toUpperCase()}${opts.tag.slice(1)}`] = true;
+      world.addBody(body);
+    }
+    if (opts.onPlaced) opts.onPlaced(inst, body);
+  });
+}
+
+// Place a model adjacent to a reference by specifying offsets along forward/right (derived from yawDeg)
+export function placePropAdjacent(
+  world: CANNON.World,
+  scene: THREE.Scene,
+  origin: THREE.Vector3,
+  yawDeg: number,
+  offsetForward: number,
+  offsetRight: number,
+  opts: PlacePropOpts & { y?: number }
+) {
+  const yawRad = THREE.MathUtils.degToRad(yawDeg);
+  const F = new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
+  const R = new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad));
+  const pos = origin.clone().addScaledVector(F, offsetForward).addScaledVector(R, offsetRight);
+  placePropAt(world, scene, { ...opts, position: pos, yawDeg });
 }
