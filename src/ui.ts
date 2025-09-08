@@ -102,11 +102,6 @@ export const UI = {
       if (el) el.style.display = v ? "block" : "none";
     }
   },
-  setControlsHelp(text: string) {
-    const el = document.querySelector(".controls") as HTMLElement | null;
-    if (!el) return;
-    el.innerHTML = `<b>Controls:</b> ${text}`;
-  },
   setIntroControls(text: string) {
     const el = document.getElementById("introControls") as HTMLElement | null;
     if (el) el.textContent = text;
@@ -115,7 +110,8 @@ export const UI = {
 
 // Simple mobile detection based on coarse pointer or touch support
 function isMobilePlatform() {
-  const mq = typeof window !== "undefined" && (window.matchMedia as any) ? window.matchMedia("(pointer: coarse)") : null;
+  const mq =
+    typeof window !== "undefined" && (window.matchMedia as any) ? window.matchMedia("(pointer: coarse)") : null;
   const coarse = mq ? mq.matches : false;
   const touch = (navigator as any).maxTouchPoints ? (navigator as any).maxTouchPoints > 0 : false;
   return coarse || touch;
@@ -153,65 +149,77 @@ export function enableMobileControls(input: Input) {
   // Smaller joystick so it reaches max values with less travel
   const JOY_RADIUS = 60; // px (was 80)
   const KNOB_RADIUS = 28; // px (was 36)
-  Object.assign(joyBase.style as any, {
-    position: "absolute",
-    width: `${JOY_RADIUS * 2}px`,
-    height: `${JOY_RADIUS * 2}px`,
-    borderRadius: "50%",
-    border: "3px solid #fff",
-    background: "rgba(255,255,255,0.1)",
-    display: "none",
-    transform: "translate(-50%, -50%)",
-    pointerEvents: "none",
-  } as any);
-  Object.assign(joyKnob.style as any, {
-    position: "absolute",
-    width: `${KNOB_RADIUS * 2}px`,
-    height: `${KNOB_RADIUS * 2}px`,
-    borderRadius: "50%",
-    background: "#fff",
-    opacity: "0.9",
-    left: "50%",
-    top: "50%",
-    transform: "translate(-50%, -50%)",
-    pointerEvents: "none",
-  } as any);
+  Object.assign(
+    joyBase.style as any,
+    {
+      position: "absolute",
+      width: `${JOY_RADIUS * 2}px`,
+      height: `${JOY_RADIUS * 2}px`,
+      borderRadius: "50%",
+      border: "3px solid #fff",
+      background: "rgba(255,255,255,0.1)",
+      display: "none",
+      transform: "translate(-50%, -50%)",
+      pointerEvents: "none",
+    } as any
+  );
+  Object.assign(
+    joyKnob.style as any,
+    {
+      position: "absolute",
+      width: `${KNOB_RADIUS * 2}px`,
+      height: `${KNOB_RADIUS * 2}px`,
+      borderRadius: "50%",
+      background: "#fff",
+      opacity: "0.9",
+      left: "50%",
+      top: "50%",
+      transform: "translate(-50%, -50%)",
+      pointerEvents: "none",
+    } as any
+  );
   joyBase.appendChild(joyKnob);
   container.appendChild(joyBase);
 
   // Right-side buttons container
   const btnWrap = document.createElement("div");
-  Object.assign(btnWrap.style as any, {
-    position: "absolute",
-    right: "calc(16px + env(safe-area-inset-right))",
-    bottom: "calc(16px + env(safe-area-inset-bottom))",
-    display: "flex",
-    flexDirection: "column",
-    gap: "16px",
-    alignItems: "center",
-    pointerEvents: "auto",
-    touchAction: "none",
-  } as any);
+  Object.assign(
+    btnWrap.style as any,
+    {
+      position: "absolute",
+      right: "calc(16px + env(safe-area-inset-right))",
+      bottom: "calc(16px + env(safe-area-inset-bottom))",
+      display: "flex",
+      flexDirection: "column",
+      gap: "16px",
+      alignItems: "center",
+      pointerEvents: "auto",
+      touchAction: "none",
+    } as any
+  );
 
   function makeButton(label: string) {
     const b = document.createElement("div");
-    Object.assign(b.style as any, {
-      width: "86px",
-      height: "86px",
-      borderRadius: "50%",
-      background: "#fff",
-      color: "#000",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: "16px",
-      fontWeight: "700",
-      boxShadow: "0 6px 16px rgba(0,0,0,0.35)",
-      opacity: "0.9",
-      pointerEvents: "auto",
-      touchAction: "none",
-    } as any);
+    Object.assign(
+      b.style as any,
+      {
+        width: "86px",
+        height: "86px",
+        borderRadius: "50%",
+        background: "#fff",
+        color: "#000",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "16px",
+        fontWeight: "700",
+        boxShadow: "0 6px 16px rgba(0,0,0,0.35)",
+        opacity: "0.9",
+        pointerEvents: "auto",
+        touchAction: "none",
+      } as any
+    );
     b.textContent = label;
     return b;
   }
@@ -387,28 +395,44 @@ export function enableMobileControls(input: Input) {
   };
 
   // Global listeners (pointerEvents none on container, so bind on document)
-  document.addEventListener("touchstart", (e) => {
-    onTouchStart(e);
-    updateButtonsFromTouches(e.touches, e);
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const t = e.changedTouches[i];
-      if (maybeBeginLook(t)) {
-        e.preventDefault();
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      onTouchStart(e);
+      updateButtonsFromTouches(e.touches, e);
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (maybeBeginLook(t)) {
+          e.preventDefault();
+        }
       }
-    }
-  }, { passive: false });
-  document.addEventListener("touchmove", (e) => {
-    onTouchMove(e);
-    updateButtonsFromTouches(e.touches, e);
-  }, { passive: false });
-  document.addEventListener("touchend", (e) => {
-    onTouchEnd(e);
-    updateButtonsFromTouches(e.touches);
-  }, { passive: false });
-  document.addEventListener("touchcancel", (e) => {
-    onTouchEnd(e as any);
-    updateButtonsFromTouches((e as any).touches || ({} as any));
-  }, { passive: false });
+    },
+    { passive: false }
+  );
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      onTouchMove(e);
+      updateButtonsFromTouches(e.touches, e);
+    },
+    { passive: false }
+  );
+  document.addEventListener(
+    "touchend",
+    (e) => {
+      onTouchEnd(e);
+      updateButtonsFromTouches(e.touches);
+    },
+    { passive: false }
+  );
+  document.addEventListener(
+    "touchcancel",
+    (e) => {
+      onTouchEnd(e as any);
+      updateButtonsFromTouches((e as any).touches || ({} as any));
+    },
+    { passive: false }
+  );
 }
 
 // Banner acceptance for mobile (tap)

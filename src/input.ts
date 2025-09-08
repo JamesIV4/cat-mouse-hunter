@@ -80,12 +80,6 @@ export class Input {
     return d;
   }
 
-  consumeLockPounce() {
-    const v = this.lockPounce;
-    this.lockPounce = false;
-    return v;
-  }
-
   get forward() {
     return (
       (this.keys["KeyW"] ? 1 : 0) +
@@ -126,10 +120,6 @@ export class Input {
   get run() {
     const btn = this.getPadButtonValue(7) > 0.5 || this.isPadButton(5); // RT or RB
     return !!this.keys["ShiftLeft"] || !!this.keys["ShiftRight"] || btn || this.vRun;
-  }
-  get sneak() {
-    const btn = this.getPadButtonValue(6) > 0.5 || this.isPadButton(4); // LT or LB
-    return !!this.keys["ControlLeft"] || !!this.keys["ControlRight"] || btn;
   }
   get restart() {
     return !!this.keys["KeyR"] || this.padRestart; // Select/Back
@@ -182,13 +172,6 @@ export class Input {
     if (up || down) this._noteDevice("gamepad");
     if (up) this.wheelDelta -= 1;
     if (down) this.wheelDelta += 1;
-
-    // Pounce lock (X/B) edge trigger
-    const xBtn = this.justPressed(2) || this.justPressed(1);
-    if (xBtn) {
-      this._noteDevice("gamepad");
-      this.lockPounce = true;
-    }
 
     // Restart/Next via Back/Start edge
     this.padRestart = this.justPressed(8);

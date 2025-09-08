@@ -251,7 +251,6 @@ const controlsForScheme = (scheme: string) => {
 };
 // Initial help (will auto-update on device change)
 UI.setIntroControls(controlsForScheme(isMobile ? "touch" : "keyboardMouse"));
-UI.setControlsHelp(controlsForScheme(isMobile ? "touch" : "keyboardMouse"));
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -285,7 +284,8 @@ function loop() {
   // Pause gameplay when a banner is visible, or (on desktop) until pointer lock is active
   const canvasEl = renderer.domElement as HTMLCanvasElement;
   const pointerLocked = document.pointerLockElement === canvasEl;
-  const controlsDisabled = bannerVisible || (!isMobile && !pointerLocked);
+  const controlsDisabled = false;
+  // const controlsDisabled = bannerVisible || (!isMobile && !pointerLocked);
 
   // Always advance physics/time; input is gated separately
   world.step(1 / 60, dt, 3);
@@ -293,7 +293,6 @@ function loop() {
   (loop as any)._lastScheme = (loop as any)._lastScheme || "";
   const scheme = input.lastDevice;
   if (scheme !== (loop as any)._lastScheme) {
-    UI.setControlsHelp(controlsForScheme(scheme));
     if (introVisible) UI.setIntroControls(controlsForScheme(scheme));
     (loop as any)._lastScheme = scheme;
   }
