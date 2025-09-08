@@ -813,45 +813,17 @@ export class Level {
       this.meshes.push(cut);
     };
 
-    // Randomly add mouse holes to interior edges of rooms
-    for (let i = 0; i < rooms.length; i++) {
-      const r = rooms[i];
-      const min = r.min,
-        max = r.max;
-      const corners = [
-        new THREE.Vector3(min.x, 0, min.z),
-        new THREE.Vector3(max.x, 0, min.z),
-        new THREE.Vector3(max.x, 0, max.z),
-        new THREE.Vector3(min.x, 0, max.z),
-      ];
-      const edges = [
-        [corners[0], corners[1]],
-        [corners[1], corners[2]],
-        [corners[2], corners[3]],
-        [corners[3], corners[0]],
-      ] as const;
-      for (const [a, b] of edges) {
-        // Skip exterior perimeter edges
-        const onNorth = Math.abs(a.z - houseMax.z) < 1e-3 && Math.abs(b.z - houseMax.z) < 1e-3;
-        const onSouth = Math.abs(a.z - houseMin.z) < 1e-3 && Math.abs(b.z - houseMin.z) < 1e-3;
-        const onEast = Math.abs(a.x - houseMax.x) < 1e-3 && Math.abs(b.x - houseMax.x) < 1e-3;
-        const onWest = Math.abs(a.x - houseMin.x) < 1e-3 && Math.abs(b.x - houseMin.x) < 1e-3;
-        const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
-        if (!isInteriorEdge) continue;
-        if (Math.random() < 0.25) {
-          addMouseHoleOnEdge(r, a, b);
-        }
-      }
-    }
+    // Place mouse holes adaptively: scale count with house size and rooms,
+    // and try different edges if a chosen edge is blocked by collisions.
+    {
+      // Dynamic target: grows with room count and area; clamp to avoid excess
+      const area = (houseMax.x - houseMin.x) * (houseMax.z - houseMin.z);
+      const byRooms = Math.ceil(rooms.length * 0.5); // ~1 per 2 rooms
+      const byArea = Math.floor(area / 120); // +1 per ~120 m^2 footprint
+      const targetHoles = Math.max(3, Math.min(24, byRooms + byArea));
 
-    // Ensure a minimum number of mouse holes in the house
-    const MIN_HOLES = 3;
-    if (this.mouseHoles.length < MIN_HOLES) {
-      const candidates: {
-        room: THREE.Box3;
-        a: THREE.Vector3;
-        b: THREE.Vector3;
-      }[] = [];
+      // Build list of all interior edges as placement candidates
+      const candidates: { room: THREE.Box3; a: THREE.Vector3; b: THREE.Vector3 }[] = [];
       for (let i = 0; i < rooms.length; i++) {
         const r = rooms[i];
         const min = r.min,
@@ -878,10 +850,19 @@ export class Level {
           candidates.push({ room: r, a, b });
         }
       }
-      // Add holes on random interior edges until we reach the minimum or run out
-      for (let guard = 0; guard < candidates.length && this.mouseHoles.length < MIN_HOLES; guard++) {
-        const idx = Math.floor(Math.random() * candidates.length);
-        const c = candidates[idx];
+
+      // Shuffle candidates to distribute holes naturally across rooms
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+      }
+
+      // Try edges until we reach the target; if an edge can't host a hole due to
+      // collisions or doorways, addMouseHoleOnEdge simply skips, and we move on.
+      for (let k = 0; k < candidates.length && this.mouseHoles.length < targetHoles; k++) {
+        const c = candidates[k];
         addMouseHoleOnEdge(c.room, c.a, c.b);
       }
     }
