@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CANNON } from "./physics";
-import { placePropAgainstWallOnce, placePropAt } from "./props";
+import { placePropAgainstWallOnce } from "./props";
 import { randRange, choice } from "./utils";
 
 export type LevelSpec = {
@@ -539,8 +539,7 @@ export class Level {
       this.spawnPoints = this.spawnPoints.filter(spawnOK);
     }
 
-    // Track couch footprints placed in this level to avoid intersections and ban hole placement behind couches later
-    const couchRects: { x: number; z: number; halfX: number; halfZ: number }[] = [];
+    // Note: couches are placed later via prop helpers; no footprint tracking needed here.
 
     // Mouse holes: small black arch shapes along interior walls/baseboards
     const holeMat = new THREE.MeshStandardMaterial({
@@ -562,47 +561,7 @@ export class Level {
       const toCenter = new THREE.Vector3().subVectors(roomCenter, mid).setY(0).normalize();
       const inward = n.dot(toCenter) > 0 ? n : n.clone().multiplyScalar(-1);
 
-      // Skip if this wall segment is behind a couch placed along the wall
-      {
-        const eps = 1e-3;
-        const margin = 0.06; // small extra around couch span
-        const nearNorth = Math.abs(a.z - b.z) < eps && Math.abs(a.z - room.max.z) < eps;
-        const nearSouth = Math.abs(a.z - b.z) < eps && Math.abs(a.z - room.min.z) < eps;
-        const nearEast = Math.abs(a.x - b.x) < eps && Math.abs(a.x - room.max.x) < eps;
-        const nearWest = Math.abs(a.x - b.x) < eps && Math.abs(a.x - room.min.x) < eps;
-        let blocked = false;
-        for (const r of couchRects) {
-          if (nearNorth) {
-            const touchesWall = Math.abs(r.z + r.halfZ - room.max.z) < 0.2; // couch backs to north wall
-            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) {
-              blocked = true;
-              break;
-            }
-          }
-          if (nearSouth) {
-            const touchesWall = Math.abs(r.z - r.halfZ - room.min.z) < 0.2; // backs to south wall
-            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) {
-              blocked = true;
-              break;
-            }
-          }
-          if (nearEast) {
-            const touchesWall = Math.abs(r.x + r.halfX - room.max.x) < 0.2; // backs to east wall
-            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) {
-              blocked = true;
-              break;
-            }
-          }
-          if (nearWest) {
-            const touchesWall = Math.abs(r.x - r.halfX - room.min.x) < 0.2; // backs to west wall
-            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) {
-              blocked = true;
-              break;
-            }
-          }
-        }
-        if (blocked) return; // don't place hole behind a couch
-      }
+      // Note: no special-case blocking by couches; mouse holes are placed independently now.
 
       // Do not place holes where a doorway is carved on this wall segment
       const epsEdge = 1e-3;
@@ -933,200 +892,33 @@ export class Level {
       }
     }
 
-    // (Removed) Procedural couch model; we now place couch props instead
-
-    // Couch prop parameters (approximate dimensions in meters)
-    const COUCH_LEN = 3;
-    const COUCH_DEP = 2;
-    const COUCH_H = 2;
-
-    // Helpers to keep couches clear of doorways
-    const wouldBlockDoor = (
-      room: THREE.Box3,
-      openings: THREE.Vector3[],
-      wall: number,
-      center: number,
-      halfLen: number
-    ) => {
-      // Disallow centers too close to door center along the wall axis
-      const eps = 0.15;
-      const doorHalf = 1.2; // keep in sync with door carving
-      const extra = 0.6; // additional clearance
-      for (const o of openings) {
-        if (wall === 0 && Math.abs(o.z - room.max.z) < eps) {
-          if (Math.abs(center - o.x) < halfLen + doorHalf + extra) return true;
-        }
-        if (wall === 1 && Math.abs(o.z - room.min.z) < eps) {
-          if (Math.abs(center - o.x) < halfLen + doorHalf + extra) return true;
-        }
-        if (wall === 2 && Math.abs(o.x - room.max.x) < eps) {
-          if (Math.abs(center - o.z) < halfLen + doorHalf + extra) return true;
-        }
-        if (wall === 3 && Math.abs(o.x - room.min.x) < eps) {
-          if (Math.abs(center - o.z) < halfLen + doorHalf + extra) return true;
-        }
-      }
-      return false;
-    };
-    const boxIntersects = (minA: THREE.Vector2, maxA: THREE.Vector2, minB: THREE.Vector2, maxB: THREE.Vector2) => {
-      return !(maxA.x < minB.x || minA.x > maxB.x || maxA.y < minB.y || minA.y > maxB.y);
-    };
-    const wouldBlockDoorCorridor = (
-      room: THREE.Box3,
-      openings: THREE.Vector3[],
-      couchX: number,
-      couchZ: number,
-      yaw: number,
-      len: number,
-      dep: number
-    ) => {
-      // couch axis-aligned at yaw multiples of 90deg
-      const halfX = Math.abs(Math.sin(yaw)) > 0.5 ? dep / 2 : len / 2;
-      const halfZ = Math.abs(Math.sin(yaw)) > 0.5 ? len / 2 : dep / 2;
-      const cMin = new THREE.Vector2(couchX - halfX, couchZ - halfZ);
-      const cMax = new THREE.Vector2(couchX + halfX, couchZ + halfZ);
-      const eps = 1e-3;
-      const doorHalf = 1.2,
-        depthClear = 1.0,
-        widthExtra = 0.6;
-      for (const o of openings) {
-        // North corridor
-        if (Math.abs(o.z - room.max.z) < eps) {
-          const min = new THREE.Vector2(o.x - (doorHalf + widthExtra), room.max.z - depthClear);
-          const max = new THREE.Vector2(o.x + (doorHalf + widthExtra), room.max.z);
-          if (boxIntersects(cMin, cMax, min, max)) return true;
-        }
-        // South
-        if (Math.abs(o.z - room.min.z) < eps) {
-          const min = new THREE.Vector2(o.x - (doorHalf + widthExtra), room.min.z);
-          const max = new THREE.Vector2(o.x + (doorHalf + widthExtra), room.min.z + depthClear);
-          if (boxIntersects(cMin, cMax, min, max)) return true;
-        }
-        // East
-        if (Math.abs(o.x - room.max.x) < eps) {
-          const min = new THREE.Vector2(room.max.x - depthClear, o.z - (doorHalf + widthExtra));
-          const max = new THREE.Vector2(room.max.x, o.z + (doorHalf + widthExtra));
-          if (boxIntersects(cMin, cMax, min, max)) return true;
-        }
-        // West
-        if (Math.abs(o.x - room.min.x) < eps) {
-          const min = new THREE.Vector2(room.min.x, o.z - (doorHalf + widthExtra));
-          const max = new THREE.Vector2(room.min.x + depthClear, o.z + (doorHalf + widthExtra));
-          if (boxIntersects(cMin, cMax, min, max)) return true;
-        }
-      }
-      return false;
-    };
-    // Track couch footprints placed in this level to avoid intersections
-    // NOTE: declared earlier before hole generation
-    const rectIntersects = (x: number, z: number, halfX: number, halfZ: number) => {
-      const pad = 0.04;
-      for (const r of couchRects) {
-        if (
-          !(
-            x + halfX + pad < r.x - r.halfX ||
-            x - halfX - pad > r.x + r.halfX ||
-            z + halfZ + pad < r.z - r.halfZ ||
-            z - halfZ - pad > r.z + r.halfZ
-          )
-        )
-          return true;
-      }
-      return false;
-    };
-
-    const placeCouchAlongWall = (
-      room: THREE.Box3,
-      openings: THREE.Vector3[]
-    ): { placed: boolean; x?: number; z?: number; yaw?: number } => {
-      // Use fixed-size couch prop for placement decisions
-      const roomSize = new THREE.Vector3().subVectors(room.max, room.min);
-      const longSpan = Math.max(roomSize.x, roomSize.z);
-      const sizeFactor = THREE.MathUtils.clamp((longSpan - 4) / 8, 0, 1); // keep for later logic
-      const length = COUCH_LEN;
-      const depth = COUCH_DEP;
-      const height = COUCH_H;
-
-      // choose a wall: 0=N(max z),1=S(min z),2=E(max x),3=W(min x)
-      const wall = Math.floor(Math.random() * 4);
-      const gap = 0.06;
-      let x = 0,
-        z = 0,
-        yaw = 0;
-      let tries = 12;
-      let foundPos = false;
-      while (tries-- > 0) {
-        if (wall === 0) {
-          // North: face away from wall (into room), back toward +Z => yaw = Math.PI
-          z = room.max.z - (depth / 2 + gap);
-          const minX = room.min.x + 0.6 + length / 2;
-          const maxX = room.max.x - 0.6 - length / 2;
-          x = randRange(minX, Math.max(minX, maxX));
-          yaw = Math.PI;
-          if (!wouldBlockDoor(room, openings, wall, x, length / 2) && !rectIntersects(x, z, length / 2, depth / 2)) {
-            foundPos = true;
-            break;
-          }
-        } else if (wall === 1) {
-          // South: back toward -Z => yaw = 0
-          z = room.min.z + (depth / 2 + gap);
-          const minX = room.min.x + 0.6 + length / 2;
-          const maxX = room.max.x - 0.6 - length / 2;
-          x = randRange(minX, Math.max(minX, maxX));
-          yaw = 0;
-          if (!wouldBlockDoor(room, openings, wall, x, length / 2) && !rectIntersects(x, z, length / 2, depth / 2)) {
-            foundPos = true;
-            break;
-          }
-        } else if (wall === 2) {
-          // East: back toward +X => yaw = -PI/2
-          x = room.max.x - (depth / 2 + gap);
-          const minZ = room.min.z + 0.6 + length / 2;
-          const maxZ = room.max.z - 0.6 - length / 2;
-          z = randRange(minZ, Math.max(minZ, maxZ));
-          yaw = -Math.PI / 2;
-          if (!wouldBlockDoor(room, openings, wall, z, length / 2) && !rectIntersects(x, z, depth / 2, length / 2)) {
-            foundPos = true;
-            break;
-          }
-        } else {
-          // West: back toward -X => yaw = +PI/2
-          x = room.min.x + (depth / 2 + gap);
-          const minZ = room.min.z + 0.6 + length / 2;
-          const maxZ = room.max.z - 0.6 - length / 2;
-          z = randRange(minZ, Math.max(minZ, maxZ));
-          yaw = Math.PI / 2;
-          if (!wouldBlockDoor(room, openings, wall, z, length / 2) && !rectIntersects(x, z, depth / 2, length / 2)) {
-            foundPos = true;
-            break;
-          }
-        }
-        if (!foundPos) return { placed: false };
-      }
-
-      // doorway corridor check for main couch
-      if (wouldBlockDoorCorridor(room, openings, x, z, yaw, length, depth)) return { placed: false };
-      // Place couch prop (visual) with auto static collider
-      const yawDeg = (yaw * 180) / Math.PI;
-      placePropAt(this.world, this.scene, {
+    // Place couches: along walls, avoid doorways (fresh implementation)
+    const couchRoomIdxs = this.roomLabels
+      .map((label, i) => ({ label, i }))
+      .filter(({ label }) => label === "Living Room" || label === "Family Room")
+      .map(({ i }) => i);
+    for (const ri of couchRoomIdxs) {
+      placePropAgainstWallOnce(this.world, this.scene, rooms[ri], roomOpenings[ri], {
         modelUrl: "../models/couch/couch.fbx",
         textureUrl: "../models/couch/couch.jpg",
-        textureBrightness: 2,
-        targetHeight: height,
-        position: new THREE.Vector3(x, 0, z),
-        yawDeg,
-        collidable: false,
+        targetHeight: 2,
+        inwardOffset: 0.12,
+        doorHalf: 1.2,
+        doorMargin: 0.6,
+        shrink: 0.9,
         tag: "couch",
         onPlaced: (mesh, body) => {
           this.meshes.push(mesh);
+          if (body) this.bodies.push(body);
         },
       });
-      // record main couch footprint
-      const halfXMain = Math.abs(Math.sin(yaw)) > 0.5 ? depth / 2 : length / 2;
-      const halfZMain = Math.abs(Math.sin(yaw)) > 0.5 ? length / 2 : depth / 2;
-      couchRects.push({ x, z, halfX: halfXMain, halfZ: halfZMain });
-      return { placed: true, x, z, yaw };
-    };
+    }
+
+    // (old doorway helpers removed)
+    // (old corridor/box helpers removed)
+    // (old couch intersection helper removed)
+
+    // (old couch wall placement helper removed)
 
     for (let ri = 0; ri < rooms.length; ri++) {
       const r = rooms[ri];
@@ -1137,158 +929,11 @@ export class Level {
       // First stochastic pass
       // Accumulator defined after loop
     }
-    // Restrict couches to Living Room or Family Room only; place using wall/adjacent utilities
-    const eligibleIdxs = this.roomLabels
-      .map((lab, i) => ({ lab, i }))
-      .filter(({ lab }) => lab === "Living Room" || lab === "Family Room")
-      .map(({ i }) => i);
-    for (const ri of eligibleIdxs) {
-      const main = placeCouchAlongWall(rooms[ri], roomOpenings[ri]);
-      // Optional L-shaped second couch
-      if (main.placed && Math.random() < 0.35) {
-        const s = Math.random() < 0.5 ? 1 : -1;
-        const yaw = main.yaw!;
-        const R = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-        const pos = new THREE.Vector3(main.x!, 0, main.z!);
-        const gap = 0.06;
-        const c2 = pos.clone().add(R.clone().multiplyScalar(s * (COUCH_LEN / 2 + COUCH_DEP / 2 + gap)));
-        const yaw2 = yaw + (s * Math.PI) / 2;
-        // Bounds and door corridor checks
-        if (
-          c2.x - COUCH_LEN / 2 >= rooms[ri].min.x + 0.5 &&
-          c2.x + COUCH_LEN / 2 <= rooms[ri].max.x - 0.5 &&
-          c2.z - COUCH_DEP / 2 >= rooms[ri].min.z + 0.5 &&
-          c2.z + COUCH_DEP / 2 <= rooms[ri].max.z - 0.5 &&
-          !rectIntersects(
-            c2.x,
-            c2.z,
-            Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_DEP / 2 : COUCH_LEN / 2,
-            Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_LEN / 2 : COUCH_DEP / 2
-          ) &&
-          !wouldBlockDoorCorridor(rooms[ri], roomOpenings[ri], c2.x, c2.z, yaw2, COUCH_LEN, COUCH_DEP)
-        ) {
-          placePropAt(this.world, this.scene, {
-            modelUrl: "../models/couch/couch.fbx",
-            textureUrl: "../models/couch/couch.jpg",
-            textureBrightness: 1,
-            targetHeight: COUCH_H,
-            position: c2,
-            yawDeg: (yaw2 * 180) / Math.PI,
-            collidable: true,
-            tag: "couch",
-            onPlaced: (mesh, body) => {
-              this.meshes.push(mesh);
-            },
-          });
-          const halfX2 = Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_DEP / 2 : COUCH_LEN / 2;
-          const halfZ2 = Math.abs(Math.sin(yaw2)) > 0.5 ? COUCH_LEN / 2 : COUCH_DEP / 2;
-          couchRects.push({ x: c2.x, z: c2.z, halfX: halfX2, halfZ: halfZ2 });
-        }
-      }
-    }
+    // (old multi-couch placement removed)
 
-    // After couches are placed, remove any gameplay holes that are behind couches
-    if (this.mouseHoles.length > 0 && couchRects.length > 0) {
-      const margin = 0.06;
-      const eps = 1e-3;
-      const notBehindCouch = (h: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 }) => {
-        const room = h.room;
-        const pos = h.position;
-        const nearNorth = Math.abs(pos.z - room.max.z) < eps;
-        const nearSouth = Math.abs(pos.z - room.min.z) < eps;
-        const nearEast = Math.abs(pos.x - room.max.x) < eps;
-        const nearWest = Math.abs(pos.x - room.min.x) < eps;
-        for (const r of couchRects) {
-          if (nearNorth) {
-            const touchesWall = Math.abs(r.z + r.halfZ - room.max.z) < 0.2;
-            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) return false;
-          }
-          if (nearSouth) {
-            const touchesWall = Math.abs(r.z - r.halfZ - room.min.z) < 0.2;
-            if (touchesWall && pos.x >= r.x - r.halfX - margin && pos.x <= r.x + r.halfX + margin) return false;
-          }
-          if (nearEast) {
-            const touchesWall = Math.abs(r.x + r.halfX - room.max.x) < 0.2;
-            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) return false;
-          }
-          if (nearWest) {
-            const touchesWall = Math.abs(r.x - r.halfX - room.min.x) < 0.2;
-            if (touchesWall && pos.z >= r.z - r.halfZ - margin && pos.z <= r.z + r.halfZ + margin) return false;
-          }
-        }
-        return true;
-      };
-      const before = this.mouseHoles.length;
-      this.mouseHoles = this.mouseHoles.filter(notBehindCouch);
-      const removedCount = Math.max(0, before - this.mouseHoles.length);
+    // (old mouse-hole cleanup related to couches removed)
 
-      // If any holes were removed due to couches, try to add replacements
-      if (removedCount > 0) {
-        const candidates: {
-          room: THREE.Box3;
-          a: THREE.Vector3;
-          b: THREE.Vector3;
-        }[] = [];
-        for (let i = 0; i < rooms.length; i++) {
-          const r = rooms[i];
-          const min = r.min,
-            max = r.max;
-          const corners = [
-            new THREE.Vector3(min.x, 0, min.z),
-            new THREE.Vector3(max.x, 0, min.z),
-            new THREE.Vector3(max.x, 0, max.z),
-            new THREE.Vector3(min.x, 0, max.z),
-          ];
-          const edges = [
-            [corners[0], corners[1]],
-            [corners[1], corners[2]],
-            [corners[2], corners[3]],
-            [corners[3], corners[0]],
-          ] as const;
-          for (const [a, b] of edges) {
-            const onNorth = Math.abs(a.z - houseMax.z) < 1e-3 && Math.abs(b.z - houseMax.z) < 1e-3;
-            const onSouth = Math.abs(a.z - houseMin.z) < 1e-3 && Math.abs(b.z - houseMin.z) < 1e-3;
-            const onEast = Math.abs(a.x - houseMax.x) < 1e-3 && Math.abs(b.x - houseMax.x) < 1e-3;
-            const onWest = Math.abs(a.x - houseMin.x) < 1e-3 && Math.abs(b.x - houseMin.x) < 1e-3;
-            const isInteriorEdge = !(onNorth || onSouth || onEast || onWest);
-            if (!isInteriorEdge) continue;
-            candidates.push({ room: r, a, b });
-          }
-        }
-        let toAdd = removedCount;
-        let guard = candidates.length * 2 + 20;
-        while (toAdd > 0 && guard-- > 0 && candidates.length > 0) {
-          const idx = Math.floor(Math.random() * candidates.length);
-          const c = candidates[idx];
-          addMouseHoleOnEdge(c.room, c.a, c.b);
-          // After each attempted placement, recheck if it survived couch filter
-          const afterTry = this.mouseHoles.filter(notBehindCouch);
-          const grew = afterTry.length > this.mouseHoles.length ? 1 : 0;
-          this.mouseHoles = afterTry;
-          if (grew > 0) toAdd -= grew;
-        }
-        // Final safety recheck
-        this.mouseHoles = this.mouseHoles.filter(notBehindCouch);
-      }
-    }
-
-    // Remove spawn points that ended up under couches
-    if (this.spawnPoints.length > 0 && couchRects.length > 0) {
-      const margin = 0.1; // small clearance around couch footprint
-      this.spawnPoints = this.spawnPoints.filter((p) => {
-        for (const r of couchRects) {
-          if (
-            p.x >= r.x - r.halfX - margin &&
-            p.x <= r.x + r.halfX + margin &&
-            p.z >= r.z - r.halfZ - margin &&
-            p.z <= r.z + r.halfZ + margin
-          ) {
-            return false; // inside a couch footprint
-          }
-        }
-        return true;
-      });
-    }
+    // (old spawn-point cleanup related to couches removed)
 
     // Clutter: dynamic physics objects biased to kid-friendly rooms
     // Build weighted room list based on semantic labels
