@@ -294,7 +294,8 @@ export class Mouse {
     v.z += (pos.z < b.min.z + 0.5 ? 1 : 0) + (pos.z > b.max.z - 0.5 ? -1 : 0);
 
     // Match visual Y to hitbox radius so feet stay on ground
-    this.mesh.position.set(this.body.position.x, 0.24, this.body.position.z);
+    // Slightly lower the visual so it sits closer to the floor
+    this.mesh.position.set(this.body.position.x, 0.1, this.body.position.z);
     // Orient the mouse to face its direction of travel
     const speedH = Math.hypot(v.x, v.z);
     if (speedH > 0.05) {

@@ -775,11 +775,27 @@ export class Level {
     fence(new THREE.Vector3(yardMin.x, 0, yardMax.z), new THREE.Vector3(yardMin.x, 0, yardMin.z));
 
     // Hard floors and ceilings for rooms, plus yard
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xc8a97e }); // light wood brown
+    // Wood floor texture for interior rooms (tiled per room size)
+    const woodTexUrl = new URL("../textures/wood-floor.jpg", import.meta.url).toString();
+    const woodBaseTex = new THREE.TextureLoader().load(woodTexUrl);
+    woodBaseTex.wrapS = THREE.RepeatWrapping;
+    woodBaseTex.wrapT = THREE.RepeatWrapping;
+    // Modern THREE uses colorSpace; fall back to encoding if needed
+    (woodBaseTex as any).colorSpace = (THREE as any).SRGBColorSpace || (woodBaseTex as any).colorSpace;
+    woodBaseTex.anisotropy = 8;
+    const tileSize = 2.5; // meters per texture tile
+    const makeFloorMat = (sx: number, sz: number) => {
+      const tex = woodBaseTex.clone();
+      tex.needsUpdate = true;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(Math.max(1, sx / tileSize), Math.max(1, sz / tileSize));
+      return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, metalness: 0.0 });
+    };
     const ceilMat = new THREE.MeshStandardMaterial({ color: 0xe6e6e6 });
     for (const r of rooms) {
       const size = new THREE.Vector3().subVectors(r.max, r.min);
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, 0.1, size.z), floorMat);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, 0.1, size.z), makeFloorMat(size.x, size.z));
       mesh.position.set((r.min.x + r.max.x) / 2, 0.05, (r.min.z + r.max.z) / 2);
       mesh.receiveShadow = true;
       this.scene.add(mesh);
