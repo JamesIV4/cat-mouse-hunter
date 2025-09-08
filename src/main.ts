@@ -61,9 +61,9 @@ if (!isMobile) {
     sfx.resume();
   });
   document.addEventListener("pointerlockchange", () => {
-    const locked = document.pointerLockElement === canvas;
-    const hint = document.getElementById("lockHint") as HTMLElement | null;
-    if (hint) hint.style.display = locked ? "none" : "block";
+    // const locked = document.pointerLockElement === canvas;
+    // const hint = document.getElementById("lockHint") as HTMLElement | null;
+    // if (hint) hint.style.display = locked ? "none" : "block";
   });
 } else {
   // On mobile, resume audio on first interaction via touch anywhere
@@ -123,8 +123,13 @@ let caught = 0;
 let required = 0;
 let remaining = 0;
 let bannerVisible = false;
+let introVisible = false;
+// Defer mouse spawning on initial intro
+let pendingMiceSpawn = false;
+let pendingSpec: LevelSpec | null = null;
+let levelStartPos: THREE.Vector3 | null = null;
 
-function createLevel(n: number) {
+function createLevel(n: number, spawnMice: boolean = true) {
   level.generate(specForLevel(n));
   // Clear any leftover particles when a new level loads
   particles.clear();
@@ -140,54 +145,113 @@ function createLevel(n: number) {
   cat = new CatController(world, scene, input, start.clone());
   UI.hideBanner();
   bannerVisible = false;
+  levelStartPos = start.clone();
 
   // mice
   for (const m of mice) {
     if (m.alive) m.kill();
   }
   mice = [];
-  // Reset per-level banned mouse-hole spawns
-  Mouse.resetHoleBans();
   const spec = specForLevel(n);
   required = spec.miceRequired;
-  // Create a no-spawn safe radius around the player's start so mice don't spawn too close
-  const safeRadius = 5.0; // meters
-  if (level.spawnPoints.length > 0) {
-    level.spawnPoints = level.spawnPoints.filter((p) => p.distanceTo(start) >= safeRadius);
-  }
-  const pickSpawnFarFrom = (origin: THREE.Vector3): THREE.Vector3 => {
-    // Prefer filtered spawnPoints if any remain
-    if (level.spawnPoints.length > 0) {
-      return level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)].clone();
-    }
-    // Fallback: sample points inside random rooms, away from origin
-    for (let tries = 0; tries < 40; tries++) {
-      const r = level.roomBoxes[Math.floor(Math.random() * level.roomBoxes.length)];
-      const margin = 0.6;
-      const x = THREE.MathUtils.lerp(r.min.x + margin, r.max.x - margin, Math.random());
-      const z = THREE.MathUtils.lerp(r.min.z + margin, r.max.z - margin, Math.random());
-      const p = new THREE.Vector3(x, 0, z);
-      if (p.distanceTo(origin) >= safeRadius) return p;
-    }
-    // Last resort: push a point away from origin
-    const dir = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5).normalize();
-    return new THREE.Vector3(origin.x + dir.x * (safeRadius + 1), 0, origin.z + dir.y * (safeRadius + 1));
-  };
-  for (let i = 0; i < spec.mouseCount; i++) {
-    const p = pickSpawnFarFrom(start);
-    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), level.mouseHoles, sfx);
-    mouse.speed = spec.mouseSpeed;
-    mice.push(mouse);
-  }
+  // Defer mice spawn if requested
+  pendingSpec = spec;
   caught = 0;
-  remaining = mice.length;
+  if (spawnMice) {
+    spawnMiceNow();
+  } else {
+    remaining = 0;
+    pendingMiceSpawn = true;
+  }
   UI.setLevel(currentLevel);
   UI.setCaught(caught);
   UI.setRequired(required);
   UI.setRemaining(remaining);
 }
 
-createLevel(currentLevel);
+// Helper: pick a spawn point far from an origin
+function pickSpawnFarFrom(origin: THREE.Vector3): THREE.Vector3 {
+  const safeRadius = 5.0; // meters
+  // Prefer filtered spawnPoints if any remain
+  if (level.spawnPoints.length > 0) {
+    return level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)].clone();
+  }
+  // Fallback: sample points inside random rooms, away from origin
+  for (let tries = 0; tries < 40; tries++) {
+    const r = level.roomBoxes[Math.floor(Math.random() * level.roomBoxes.length)];
+    const margin = 0.6;
+    const x = THREE.MathUtils.lerp(r.min.x + margin, r.max.x - margin, Math.random());
+    const z = THREE.MathUtils.lerp(r.min.z + margin, r.max.z - margin, Math.random());
+    const p = new THREE.Vector3(x, 0, z);
+    if (p.distanceTo(origin) >= safeRadius) return p;
+  }
+  // Last resort: push a point away from origin
+  const dir = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5).normalize();
+  return new THREE.Vector3(origin.x + dir.x * (safeRadius + 1), 0, origin.z + dir.y * (safeRadius + 1));
+}
+
+function spawnMiceNow() {
+  if (!pendingSpec || !levelStartPos) return;
+  // Reset per-level banned mouse-hole spawns
+  Mouse.resetHoleBans();
+  // Create a no-spawn safe radius around the player's start so mice don't spawn too close
+  const safeRadius = 5.0; // meters
+  if (level.spawnPoints.length > 0) {
+    level.spawnPoints = level.spawnPoints.filter((p) => p.distanceTo(levelStartPos!) >= safeRadius);
+  }
+  for (let i = 0; i < pendingSpec.mouseCount; i++) {
+    const p = pickSpawnFarFrom(levelStartPos!);
+    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), level.mouseHoles, sfx);
+    mouse.speed = pendingSpec.mouseSpeed;
+    mice.push(mouse);
+  }
+  remaining = mice.length;
+  UI.setRemaining(remaining);
+  pendingMiceSpawn = false;
+}
+
+// Initial level: build world and cat, but defer mice until Start is clicked
+createLevel(currentLevel, false);
+
+// Game name (cooler title)
+const GAME_NAME = "Cat & Mouse";
+
+// Intro modal
+const introHtml = `
+  <h1 style="margin:0 0 8px 0; font-size:28px; letter-spacing:0.5px;">${GAME_NAME}</h1>
+  <p style="margin:6px 0 10px 0; max-width:520px;">
+    A mice infestation is sweeping the neighborhood — and you've been hired to shut it down.
+    Clear the target number of mice in each house, then push on to the next.
+  </p>
+  <div id="introControls" style="opacity:0.9; font-size:13px; margin-bottom:10px;"></div>
+  <div style="margin-top:8px; display:flex; justify-content:center;">
+    <button id="nextBtn" style="
+      padding:10px 16px;
+      font-family: system-ui, sans-serif;
+      font-size:16px;
+      font-weight:700;
+      border-radius:10px;
+      border:none;
+      background:#fff;
+      color:#000;
+      box-shadow:0 6px 16px rgba(0,0,0,0.35);
+    ">Start ▶</button>
+  </div>`;
+UI.showBanner(introHtml);
+bannerVisible = true;
+introVisible = true;
+
+// Controls help strings per scheme
+const controlsForScheme = (scheme: string) => {
+  if (scheme === "gamepad")
+    return "Left stick move • A jump • RT/RB run • LT/LB sneak • Right stick look • D‑pad up/down zoom • Back restart • Start next • X/B lock pounce";
+  if (scheme === "touch")
+    return "Left thumbstick moves • Jump and Sprint buttons on the right • Drag right side to look";
+  return "WASD move • Space jump • Shift run • Ctrl sneak • E lock pounce • Mouse look • Wheel zoom • R restart • N next";
+};
+// Initial help (will auto-update on device change)
+UI.setIntroControls(controlsForScheme(isMobile ? "touch" : "keyboardMouse"));
+UI.setControlsHelp(controlsForScheme(isMobile ? "touch" : "keyboardMouse"));
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -204,15 +268,34 @@ function loop() {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
 
-  // physics
-  world.step(1 / 60, dt, 3);
-
-  // update entities
+  // update inputs (always so UI/banners can be accepted)
   input.updateGamepad(dt);
   // If the "Next level" banner is up and A was pressed to accept,
   // suppress interpreting that A press as jump this frame.
   if (bannerVisible && input.padAccept) {
     input.suppressPadJumpOnce();
+  }
+  // Intro acceptance: close intro banner on A or tap
+  if (introVisible && (input.consumePadAccept() || consumeBannerAccept())) {
+    UI.hideBanner();
+    introVisible = false;
+    bannerVisible = false;
+    if (pendingMiceSpawn) spawnMiceNow();
+  }
+  // Pause gameplay when a banner is visible, or (on desktop) until pointer lock is active
+  const canvasEl = renderer.domElement as HTMLCanvasElement;
+  const pointerLocked = document.pointerLockElement === canvasEl;
+  const controlsDisabled = bannerVisible || (!isMobile && !pointerLocked);
+
+  // Always advance physics/time; input is gated separately
+  world.step(1 / 60, dt, 3);
+  // Update controls help when input device changes
+  (loop as any)._lastScheme = (loop as any)._lastScheme || "";
+  const scheme = input.lastDevice;
+  if (scheme !== (loop as any)._lastScheme) {
+    UI.setControlsHelp(controlsForScheme(scheme));
+    if (introVisible) UI.setIntroControls(controlsForScheme(scheme));
+    (loop as any)._lastScheme = scheme;
   }
   // Provide player position so level can pause far dynamic bodies
   const playerPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
@@ -223,7 +306,8 @@ function loop() {
     camera,
     mice.filter((m) => m.alive).map((m) => m.mesh),
     // Colliders for camera pushback: all static/dynamic meshes we added to the scene
-    level.meshes
+    level.meshes,
+    !controlsDisabled
   );
 
   const catPos = playerPos.clone();
@@ -247,24 +331,24 @@ function loop() {
       UI.setCaught(caught);
       UI.setRemaining(remaining);
       if (caught >= required && !bannerVisible) {
-        const html = isMobile
-          ? `<h2>House cleared!</h2>
-             <p>You caught ${caught} mice.</p>
-             <p>Tap <b>Next</b> to continue.</p>
-             <div style="margin-top:10px;display:flex;justify-content:center;">
-               <button id="nextBtn" style="
-                 padding:10px 16px;
-                 font-family: system-ui, sans-serif;
-                 font-size:16px;
-                 font-weight:700;
-                 border-radius:10px;
-                 border:none;
-                 background:#fff;
-                 color:#000;
-                 box-shadow:0 6px 16px rgba(0,0,0,0.35);
-               ">Next ▶</button>
-             </div>`
-          : `<h2>House cleared!</h2><p>You caught ${caught} mice.</p><p>Press <b>N</b> for the next house.</p>`;
+        const scheme = input.lastDevice;
+        const hint = scheme === "gamepad" ? "Press A or click Next to continue." : "Click Next to continue.";
+        const html = `<h2>House cleared!</h2>
+               <p>You caught ${caught} mice.</p>
+               <p>${hint}</p>
+               <div style=\"margin-top:10px;display:flex;justify-content:center;\">
+                 <button id=\"nextBtn\" style=\"
+                   padding:10px 16px;
+                   font-family: system-ui, sans-serif;
+                   font-size:16px;
+                   font-weight:700;
+                   border-radius:10px;
+                   border:none;
+                   background:#fff;
+                   color:#000;
+                   box-shadow:0 6px 16px rgba(0,0,0,0.35);\
+                 \">Next ▶</button>
+               </div>`;
         UI.showBanner(html);
         bannerVisible = true;
         // Soft purr while banner is visible
@@ -277,17 +361,19 @@ function loop() {
   if (input.restart) {
     createLevel(currentLevel);
   }
-  if ((input.next || input.consumePadAccept() || consumeBannerAccept()) && caught >= required) {
+  if ((input.consumePadAccept() || consumeBannerAccept()) && caught >= required) {
     currentLevel++;
     createLevel(currentLevel);
   }
 
-  // Debug: toggle collider visibility with F2
+  // Debug: toggle collider visibility and HUD debug with F2
   // Edge-detect the key press to avoid rapid toggling while held
   (loop as any)._prevF2 = (loop as any)._prevF2 || false;
   const f2 = !!input.keys["F2"];
   if (f2 && !(loop as any)._prevF2) {
     toggleColliderDebug();
+    (loop as any)._hudDbg = !(loop as any)._hudDbg;
+    UI.setHudDebugVisible(!!(loop as any)._hudDbg);
   }
   (loop as any)._prevF2 = f2;
 

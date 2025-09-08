@@ -4,6 +4,8 @@ export class Input {
   wheelDelta = 0;
   lockPounce = false;
   sensitivity = 1.0;
+  // Last active input device for help text
+  private _lastDevice: "keyboardMouse" | "gamepad" | "touch" = "keyboardMouse";
 
   // Gamepad state
   gpIndex: number = -1;
@@ -29,22 +31,26 @@ export class Input {
 
   bind() {
     this.dom.addEventListener("keydown", (e: KeyboardEvent) => {
+      this._noteDevice("keyboardMouse");
       this.keys[e.code] = true;
       // Prevent browser scroll/shortcuts for movement keys
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code))
         e.preventDefault();
     });
     this.dom.addEventListener("keyup", (e: KeyboardEvent) => {
+      this._noteDevice("keyboardMouse");
       this.keys[e.code] = false;
       if (e.code === "KeyE") this.lockPounce = true;
     });
     window.addEventListener("mousemove", (e: MouseEvent) => {
+      this._noteDevice("keyboardMouse");
       this.mouseDelta.x += e.movementX;
       this.mouseDelta.y += e.movementY;
     });
     window.addEventListener(
       "wheel",
       (e: WheelEvent) => {
+        this._noteDevice("keyboardMouse");
         this.wheelDelta += Math.sign(e.deltaY);
       },
       { passive: true }
@@ -161,6 +167,9 @@ export class Input {
     const ry = dead(ax[3] || 0);
     this.gpMoveX = lx;
     this.gpMoveY = -ly; // up positive
+    if (Math.abs(lx) > 0.01 || Math.abs(ly) > 0.01 || Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01) {
+      this._noteDevice("gamepad");
+    }
 
     // Camera look from right stick
     const lookScale = 25 * this.sensitivity; // tuned for pad
@@ -170,16 +179,21 @@ export class Input {
     // Zoom via dpad up/down
     const up = this.isPadButton(12);
     const down = this.isPadButton(13);
+    if (up || down) this._noteDevice("gamepad");
     if (up) this.wheelDelta -= 1;
     if (down) this.wheelDelta += 1;
 
     // Pounce lock (X/B) edge trigger
     const xBtn = this.justPressed(2) || this.justPressed(1);
-    if (xBtn) this.lockPounce = true;
+    if (xBtn) {
+      this._noteDevice("gamepad");
+      this.lockPounce = true;
+    }
 
     // Restart/Next via Back/Start edge
     this.padRestart = this.justPressed(8);
     this.padNext = this.justPressed(9);
+    if (this.padRestart || this.padNext || this.padAccept) this._noteDevice("gamepad");
     // Accept/Advance via A edge
     this.padAccept = this.justPressed(0);
     // If A is currently up, clear any latched jump suppression
@@ -226,5 +240,16 @@ export class Input {
   // Prevent the current A press from being interpreted as jump until A is released
   suppressPadJumpOnce() {
     this.suppressPadJumpLatched = true;
+  }
+
+  // Device detection helpers
+  private _noteDevice(kind: "keyboardMouse" | "gamepad" | "touch") {
+    this._lastDevice = kind;
+  }
+  noteTouchActivity() {
+    this._noteDevice("touch");
+  }
+  get lastDevice() {
+    return this._lastDevice;
   }
 }

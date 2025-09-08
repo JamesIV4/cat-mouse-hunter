@@ -120,7 +120,13 @@ export class CatController {
     });
   }
 
-  update(dt: number, camera: THREE.PerspectiveCamera, mice: THREE.Object3D[], colliders: THREE.Object3D[] = []) {
+  update(
+    dt: number,
+    camera: THREE.PerspectiveCamera,
+    mice: THREE.Object3D[],
+    colliders: THREE.Object3D[] = [],
+    controlsEnabled: boolean = true
+  ) {
     this.onGround = false;
     // Grounded check via cannon-es narrowphase contact equations
     const world = this.body.world as any;
@@ -231,21 +237,26 @@ export class CatController {
       this.mixer.update(dt);
     }
 
-    const mouseDelta = this.input.consumeMouseDelta();
-    // Increase overall camera look sensitivity by 50%
-    const lookSpeed = 0.003 * this.input.sensitivity;
-    this.camYaw -= mouseDelta.x * lookSpeed;
-    this.camPitch -= mouseDelta.y * lookSpeed;
-    // Further relax vertical look by ~50% more (both directions)
-    // Previous: [-2.2, 0.45] ⇒ New: approx [-2.86, 1.11]
-    this.camPitch = clamp(this.camPitch, -2.86, 1.11);
-    this.camDist = clamp(this.camDist + this.input.consumeWheelDelta(), 3, 12);
+    // Camera look input only when controls are enabled
+    if (controlsEnabled) {
+      const mouseDelta = this.input.consumeMouseDelta();
+      // Increase overall camera look sensitivity by 50%
+      const lookSpeed = 0.003 * this.input.sensitivity;
+      this.camYaw -= mouseDelta.x * lookSpeed;
+      this.camPitch -= mouseDelta.y * lookSpeed;
+      // Further relax vertical look by ~50% more (both directions)
+      // Previous: [-2.2, 0.45] ⇒ New: approx [-2.86, 1.11]
+      this.camPitch = clamp(this.camPitch, -2.86, 1.11);
+      this.camDist = clamp(this.camDist + this.input.consumeWheelDelta(), 3, 12);
+    }
 
     // Subtle auto-rotate: while the player is providing movement input,
     // gently turn the camera toward the travel direction, but only if they
     // are not actively rotating the camera themselves this frame.
     {
-      const hasLookInput = Math.abs(mouseDelta.x) > 0.001 || Math.abs(mouseDelta.y) > 0.001;
+      const hasLookInput = controlsEnabled
+        ? Math.abs(this.input.mouseDelta.x) > 0.001 || Math.abs(this.input.mouseDelta.y) > 0.001
+        : false;
       const inXRaw = this.input.right - this.input.left;
       const inZRaw = this.input.forward - this.input.backward;
       const inputMag = THREE.MathUtils.clamp(Math.hypot(inXRaw, inZRaw), 0, 1);
@@ -290,8 +301,8 @@ export class CatController {
     }
 
     // Determine desired movement in local camera space
-    const forward = this.input.forward - this.input.backward;
-    const right = this.input.right - this.input.left;
+    const forward = controlsEnabled ? this.input.forward - this.input.backward : 0;
+    const right = controlsEnabled ? this.input.right - this.input.left : 0;
     const moving = Math.abs(forward) + Math.abs(right) > 0;
 
     const speedBase = 12.0;
@@ -300,7 +311,7 @@ export class CatController {
     const speed = this.input.sneak ? speedSneak : this.input.run ? speedRun : speedBase;
 
     if (this.onGround) {
-      if (this.input.jump) {
+      if (controlsEnabled && this.input.jump) {
         // Set upward velocity and preserve horizontal momentum; set minimum horizontal based on launch angle
         const Vy = 7; // Jump strength (vertical)
         this.body.velocity.y = Vy;
@@ -326,36 +337,6 @@ export class CatController {
       }
     } else {
       if (this.state !== "Pounce") this.state = "Jump";
-    }
-
-    // Pounce targeting
-    this.pounceCooldown = Math.max(0, this.pounceCooldown - dt);
-    if (this.input.consumeLockPounce() && this.pounceCooldown <= 0) {
-      // find nearest mouse in front cone
-      let best: THREE.Object3D | null = null;
-      let bestDist = 999;
-      const pos = new THREE.Vector3(this.body.position.x, this.body.position.y, this.body.position.z);
-      const camDir = new THREE.Vector3(Math.sin(this.camYaw), 0, Math.cos(this.camYaw));
-      for (const m of mice) {
-        const d = m.position.distanceTo(pos);
-        if (d < 8) {
-          const dir = m.position.clone().sub(pos).normalize();
-          if (dir.dot(camDir) > 0.6) {
-            if (d < bestDist) {
-              bestDist = d;
-              best = m;
-            }
-          }
-        }
-      }
-      if (best) {
-        this.targetMouse = best;
-        // Leap towards target
-        const dir = best.position.clone().sub(pos).normalize();
-        this.body.velocity.set(dir.x * 8, 6.5, dir.z * 8);
-        this.state = "Pounce";
-        this.pounceCooldown = 1.0;
-      }
     }
 
     // Apply movement forces (project onto ground plane)

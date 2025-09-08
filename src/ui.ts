@@ -34,34 +34,82 @@ export const UI = {
     if (!el) return;
     el.innerHTML = html;
     el.style.display = "block";
-    // Attach mobile accept handlers
-    if (isMobilePlatform()) {
-      const nextBtn = el.querySelector("#nextBtn") as HTMLElement | null;
-      const accept = () => {
-        bannerAcceptLatched = true;
-      };
-      if (nextBtn) {
-        nextBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          accept();
-        });
-        nextBtn.addEventListener("touchstart", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          accept();
-        }, { passive: false });
-      } else {
-        // If no explicit button is provided, allow tapping the banner area
-        el.addEventListener("click", accept, { once: true });
-        el.addEventListener("touchstart", (e) => { e.preventDefault(); accept(); }, { once: true, passive: false });
+    // On desktop, free pointer lock so users can click buttons
+    try {
+      if (!isMobilePlatform() && (document as any).pointerLockElement) {
+        (document as any).exitPointerLock?.();
       }
+    } catch {}
+    // Attach accept handlers (desktop + mobile)
+    const nextBtn = el.querySelector("#nextBtn") as HTMLElement | null;
+    const accept = () => {
+      bannerAcceptLatched = true;
+    };
+    if (nextBtn) {
+      nextBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // On desktop, lock pointer immediately upon accepting via click
+        if (!isMobilePlatform()) {
+          const canvas = document.querySelector("canvas") as any;
+          canvas?.requestPointerLock?.();
+        }
+        accept();
+      });
+      nextBtn.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Do not pointer-lock on mobile/touch
+          accept();
+        },
+        { passive: false }
+      );
+    } else if (isMobilePlatform()) {
+      // Mobile fallback: allow tapping the banner area
+      el.addEventListener("click", accept, { once: true });
+      el.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault();
+          accept();
+        },
+        { once: true, passive: false }
+      );
+    } else {
+      // Desktop fallback: clicking the banner area also accepts and pointer-locks
+      const onClick = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const canvas = document.querySelector("canvas") as any;
+        canvas?.requestPointerLock?.();
+        accept();
+        el.removeEventListener("click", onClick);
+      };
+      el.addEventListener("click", onClick);
     }
   },
   hideBanner() {
     const el = document.getElementById("banner") as HTMLElement | null;
     if (!el) return;
     el.style.display = "none";
+  },
+  setHudDebugVisible(v: boolean) {
+    const ids = ["row-remaining", "row-state", "row-fps", "row-room"];
+    for (const id of ids) {
+      const el = document.getElementById(id) as HTMLElement | null;
+      if (el) el.style.display = v ? "block" : "none";
+    }
+  },
+  setControlsHelp(text: string) {
+    const el = document.querySelector(".controls") as HTMLElement | null;
+    if (!el) return;
+    el.innerHTML = `<b>Controls:</b> ${text}`;
+  },
+  setIntroControls(text: string) {
+    const el = document.getElementById("introControls") as HTMLElement | null;
+    if (el) el.textContent = text;
   },
 };
 
@@ -187,6 +235,7 @@ export function enableMobileControls(input: Input) {
   let lookLastY = 0;
 
   function updateVirtualStick(dx: number, dy: number) {
+    input.noteTouchActivity();
     // Convert pixels to -1..1 range within radius
     const len = Math.hypot(dx, dy);
     const clamped = Math.min(len, JOY_RADIUS);
@@ -201,6 +250,7 @@ export function enableMobileControls(input: Input) {
   }
 
   const onTouchStart = (e: TouchEvent) => {
+    input.noteTouchActivity();
     for (let i = 0; i < e.changedTouches.length; i++) {
       const t = e.changedTouches[i];
       const x = t.clientX;
@@ -218,6 +268,7 @@ export function enableMobileControls(input: Input) {
     }
   };
   const onTouchMove = (e: TouchEvent) => {
+    input.noteTouchActivity();
     // Joystick update
     if (joyTouchId !== null) {
       for (let i = 0; i < e.changedTouches.length; i++) {
@@ -260,6 +311,7 @@ export function enableMobileControls(input: Input) {
     joyKnob.style.top = "50%";
   };
   const onTouchEnd = (e: TouchEvent) => {
+    input.noteTouchActivity();
     if (joyTouchId !== null) {
       for (let i = 0; i < e.changedTouches.length; i++) {
         if (e.changedTouches[i].identifier === joyTouchId) {
@@ -292,6 +344,7 @@ export function enableMobileControls(input: Input) {
   };
   const pointInRect = (x: number, y: number, r: DOMRect) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   const updateButtonsFromTouches = (touches: TouchList, preventEvent?: Event) => {
+    input.noteTouchActivity();
     if (!rects) refreshRects();
     let run = false;
     let jump = false;

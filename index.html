@@ -8,12 +8,12 @@
     <!-- PWA / Fullscreen on mobile -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-    <meta name="apple-mobile-web-app-title" content="Cat Mouse Hunter" />
+    <meta name="apple-mobile-web-app-title" content="Cat & Mouse" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="Cat Mouse Hunter" />
+    <meta name="application-name" content="Cat & Mouse" />
     <!-- Solid black to avoid white bars on iOS/Android UI -->
     <meta name="theme-color" content="#000000" />
-    <title>Cat Mouse Hunter</title>
+    <title>Cat & Mouse</title>
     <style>
       html,
       body,
@@ -59,28 +59,6 @@
         min-width: 320px;
         z-index: 50;
       }
-      .controls {
-        position: absolute;
-        bottom: calc(12px + env(safe-area-inset-bottom));
-        left: calc(12px + env(safe-area-inset-left));
-        right: calc(12px + env(safe-area-inset-right));
-        color: #eaeaea;
-        font-family: system-ui, sans-serif;
-        background: rgba(0, 0, 0, 0.35);
-        border-radius: 10px;
-        padding: 10px 12px;
-        line-height: 1.2;
-        font-size: 13px;
-      }
-      .controls .row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 6px;
-      }
-      .controls input[type="range"] {
-        width: 220px;
-      }
       .lockHint {
         position: absolute;
         top: 50%;
@@ -99,28 +77,20 @@
       a {
         color: #9ad1ff;
       }
-      /* Hide desktop controls overlay on mobile (coarse pointer devices) */
-      @media (pointer: coarse) {
-        .controls { display: none; }
-      }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div class="hud" id="hud">
-      <div class="title">Cat & Mouse Service</div>
       <div class="row">Level: <span id="level">1</span></div>
       <div class="row">Mice: <span id="caught">0</span>/<span id="required">5</span></div>
-      <div class="row">Remaining: <span id="remaining">0</span></div>
-      <div class="row">State: <span id="state">Idle</span></div>
-      <div class="row">FPS: <span id="fps">0</span></div>
-      <div class="row">Room: <span id="roomType">Unknown</span></div>
+      <div class="row" id="row-remaining" style="display: none">Remaining: <span id="remaining">0</span></div>
+      <div class="row" id="row-state" style="display: none">State: <span id="state">Idle</span></div>
+      <div class="row" id="row-fps" style="display: none">FPS: <span id="fps">0</span></div>
+      <div class="row" id="row-room" style="display: none">Room: <span id="roomType">Unknown</span></div>
     </div>
     <div class="center-banner" id="banner"></div>
-    <div class="controls">
-      <b>Controls:</b> WASD move • Space jump • Shift run • Ctrl sneak • E pounce lock • Mouse pan camera • Mouse wheel
-      zoom • R restart level • N next level (when complete)
-    </div>
+
     <div class="lockHint" id="lockHint">Click the game to enable mouse look</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
