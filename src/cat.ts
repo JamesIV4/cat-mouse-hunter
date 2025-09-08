@@ -24,6 +24,9 @@ export class CatController {
   targetMouse: THREE.Object3D | null = null;
   pounceCooldown = 0;
   private _raycaster = new THREE.Raycaster();
+  // Smoothed camera state
+  private _smoothCamPos: THREE.Vector3 | null = null;
+  private _smoothCamTarget: THREE.Vector3 | null = null;
 
   constructor(
     public world: CANNON.World,
@@ -217,6 +220,44 @@ export class CatController {
     this.camPitch = clamp(this.camPitch, -2.86, 1.11);
     this.camDist = clamp(this.camDist + this.input.consumeWheelDelta(), 3, 12);
 
+    // Subtle auto-rotate: while the player is providing movement input,
+    // gently turn the camera toward the travel direction, but only if they
+    // are not actively rotating the camera themselves this frame.
+    {
+      const hasLookInput = Math.abs(mouseDelta.x) > 0.001 || Math.abs(mouseDelta.y) > 0.001;
+      const isMovingInput = Math.abs(this.input.forward - this.input.backward) + Math.abs(this.input.right - this.input.left) > 0;
+      if (isMovingInput && !hasLookInput) {
+        // Prefer current horizontal velocity to infer travel direction; if too low, fall back to intended input dir
+        const vx = this.body.velocity.x;
+        const vz = this.body.velocity.z;
+        const speedH = Math.hypot(vx, vz);
+        let desiredYaw: number | null = null;
+        if (speedH > 0.2) {
+          desiredYaw = Math.atan2(vx, vz);
+        } else {
+          // Compute intended dir from input in camera space
+          const yaw = this.camYaw;
+          const f = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+          const r = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
+          const inX = (this.input.right - this.input.left);
+          const inZ = (this.input.forward - this.input.backward);
+          const intend = new THREE.Vector3().copy(f).multiplyScalar(inZ).add(r.multiplyScalar(inX));
+          if (intend.lengthSq() > 1e-4) desiredYaw = Math.atan2(intend.x, intend.z);
+        }
+        if (desiredYaw != null) {
+          // Smoothly steer camYaw toward desiredYaw with a capped rate
+          let delta = desiredYaw - this.camYaw;
+          while (delta > Math.PI) delta -= Math.PI * 2;
+          while (delta < -Math.PI) delta += Math.PI * 2;
+          // Increase rotate rate while sprinting to keep up with fast travel
+          let maxRate = 0.9; // rad/s base
+          if (this.input.run) maxRate *= 1.6;
+          const step = THREE.MathUtils.clamp(delta, -maxRate * dt, maxRate * dt);
+          this.camYaw += step;
+        }
+      }
+    }
+
     // Determine desired movement in local camera space
     const forward = this.input.forward - this.input.backward;
     const right = this.input.right - this.input.left;
@@ -376,8 +417,16 @@ export class CatController {
         camPos.copy(camTarget).add(dir.multiplyScalar(hitDist));
       }
     }
-    camera.position.lerp(camPos, 0.15);
-    camera.lookAt(camTarget);
+    // Initialize smooth buffers on first use
+    if (!this._smoothCamPos) this._smoothCamPos = camPos.clone();
+    if (!this._smoothCamTarget) this._smoothCamTarget = camTarget.clone();
+    // Smooth falloff/lerp for camera position and target
+    const posAlpha = this.input.run ? 0.22 : 0.16; // slightly quicker when sprinting
+    const tgtAlpha = 0.2;
+    this._smoothCamPos.lerp(camPos, posAlpha);
+    this._smoothCamTarget.lerp(camTarget, tgtAlpha);
+    camera.position.copy(this._smoothCamPos);
+    camera.lookAt(this._smoothCamTarget);
   }
 }
 
