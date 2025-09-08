@@ -191,20 +191,9 @@ export function enableMobileControls(input: Input) {
     const clamped = Math.min(len, JOY_RADIUS);
     const nx = len > 0 ? (dx / len) * (clamped / JOY_RADIUS) : 0;
     const ny = len > 0 ? (dy / len) * (clamped / JOY_RADIUS) : 0;
-    // Apply deadzone to movement (20%) with radial remap outside the zone
-    const DZ = 0.2;
-    const mag = Math.hypot(nx, ny);
-    let outX = 0, outY = 0;
-    if (mag > DZ) {
-      const ux = nx / mag;
-      const uy = ny / mag;
-      const scaled = (mag - DZ) / (1 - DZ);
-      outX = ux * scaled;
-      outY = uy * scaled;
-    }
-    // Up should be positive for forward
-    input.vMoveX = outX;
-    input.vMoveY = -outY;
+    // Map directly; up should be positive for forward
+    input.vMoveX = nx;
+    input.vMoveY = -ny;
     // Move knob
     (joyKnob.style as any).left = `${50 + nx * (JOY_RADIUS - KNOB_RADIUS)}%`;
     (joyKnob.style as any).top = `${50 + ny * (JOY_RADIUS - KNOB_RADIUS)}%`;

@@ -174,14 +174,20 @@ export class CatController {
       }
     }
 
-    // Animation state machine by velocity magnitude
+    // Animation state machine by velocity magnitude, with input-aware fallback
     if (this.mixer && this.actions) {
       const vx = this.body.velocity.x;
       const vz = this.body.velocity.z;
       const speedH = Math.hypot(vx, vz);
+      // Approximate analog magnitude from inputs (keyboard gives 0 or 1)
+      const inX = this.input.right - this.input.left;
+      const inZ = this.input.forward - this.input.backward;
+      const inputMag = THREE.MathUtils.clamp(Math.hypot(inX, inZ), 0, 1);
       let targetKind: "idle" | "walk" | "run" = "idle";
-      if (speedH > 3.0) targetKind = "run";
-      else if (speedH > 0.4) targetKind = "walk";
+      const movingInput = inputMag > 0.05 || speedH > 0.1;
+      // Only play run when sprint is pressed; otherwise walk, so analog can slow the cycle
+      if (this.input.run && movingInput) targetKind = "run";
+      else if (movingInput) targetKind = "walk";
       const targetName = (this.actionByKind[targetKind] || this.currentAction || "").toLowerCase();
       if (targetName && targetName !== this.currentAction && this.actions[targetName]) {
         const next = this.actions[targetName];
@@ -195,17 +201,32 @@ export class CatController {
         const act = this.actions[this.currentAction];
         if (act) {
           if (this.currentAction === (this.actionByKind.run || "").toLowerCase()) {
-            act.timeScale = THREE.MathUtils.clamp(speedH / 4.0, 0.7, 2.0);
+            // Running: scale with horizontal speed
+            const ts = THREE.MathUtils.clamp(speedH / 4.0, 0.7, 2.0);
+            act.enabled = true;
+            act.setEffectiveTimeScale(ts);
           } else if (this.currentAction === (this.actionByKind.walk || "").toLowerCase()) {
-            act.timeScale = THREE.MathUtils.clamp(speedH / 1.5, 0.6, 1.6);
+            // Walking: scale animation by actual horizontal speed so small analog input
+            // slows the cycle nearly to a stop. This ties foot cadence to motion and
+            // prevents fast steps when accelerating/decelerating.
+            const WALK_NOMINAL = 12.0; // must match speedBase below
+            const speedNorm = THREE.MathUtils.clamp(speedH / WALK_NOMINAL, 0, 1);
+            // Ease slightly for finer control in the low range
+            const curved = Math.pow(speedNorm, 1.2);
+            const low = 0.005; // effectively almost paused at tiny movement
+            const high = 1.6; // brisk walk at full speed
+            const ts = THREE.MathUtils.lerp(low, high, curved);
+            act.enabled = true;
+            act.setEffectiveTimeScale(ts);
           } else {
-            act.timeScale = 1.0;
+            act.enabled = true;
+            act.setEffectiveTimeScale(1.0);
           }
         }
       }
-      // Pause animation when not moving or while airborne (jump/pounce)
-      // Using mixer.timeScale so all clips freeze cleanly
-      const paused = speedH <= 0.05 || !this.onGround;
+      // Pause animation only when truly idle or while airborne (jump/pounce)
+      // Keep a tiny playback when there's slight analog input.
+      const paused = !this.onGround || (speedH <= 0.05 && inputMag <= 0.01);
       this.mixer.timeScale = paused ? 0 : this.animBaseSpeed;
       this.mixer.update(dt);
     }
@@ -225,7 +246,10 @@ export class CatController {
     // are not actively rotating the camera themselves this frame.
     {
       const hasLookInput = Math.abs(mouseDelta.x) > 0.001 || Math.abs(mouseDelta.y) > 0.001;
-      const isMovingInput = Math.abs(this.input.forward - this.input.backward) + Math.abs(this.input.right - this.input.left) > 0;
+      const inXRaw = this.input.right - this.input.left;
+      const inZRaw = this.input.forward - this.input.backward;
+      const inputMag = THREE.MathUtils.clamp(Math.hypot(inXRaw, inZRaw), 0, 1);
+      const isMovingInput = inputMag > 0.0001;
       if (isMovingInput && !hasLookInput) {
         // Prefer current horizontal velocity to infer travel direction; if too low, fall back to intended input dir
         const vx = this.body.velocity.x;
@@ -239,20 +263,27 @@ export class CatController {
           const yaw = this.camYaw;
           const f = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
           const r = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
-          const inX = (this.input.right - this.input.left);
-          const inZ = (this.input.forward - this.input.backward);
-          const intend = new THREE.Vector3().copy(f).multiplyScalar(inZ).add(r.multiplyScalar(inX));
+          const intend = new THREE.Vector3().copy(f).multiplyScalar(inZRaw).add(r.multiplyScalar(inXRaw));
           if (intend.lengthSq() > 1e-4) desiredYaw = Math.atan2(intend.x, intend.z);
         }
         if (desiredYaw != null) {
-          // Smoothly steer camYaw toward desiredYaw with a capped rate
+          // Smoothly steer camYaw toward desiredYaw with speed proportional to angle difference
           let delta = desiredYaw - this.camYaw;
           while (delta > Math.PI) delta -= Math.PI * 2;
           while (delta < -Math.PI) delta += Math.PI * 2;
-          // Increase rotate rate while sprinting to keep up with fast travel
-          let maxRate = 0.9; // rad/s base
-          if (this.input.run) maxRate *= 1.6;
-          const step = THREE.MathUtils.clamp(delta, -maxRate * dt, maxRate * dt);
+          // Base responsiveness scales the step with |delta|
+          const speedHNow = Math.hypot(this.body.velocity.x, this.body.velocity.z);
+          // Normalize movement factor by a nominal run speed (~10 m/s is plenty); clamp to [0.3, 1]
+          const moveFactor = THREE.MathUtils.clamp(speedHNow / 10, 0.3, 1.0);
+          // Also scale responsiveness by input intensity so a slight push rotates more gently
+          const inputFactor = THREE.MathUtils.clamp(inputMag, 0.25, 1.0);
+          const baseResp = this.input.run ? 3.0 : 2.0; // rad/s per rad of delta
+          let step = delta * baseResp * moveFactor * inputFactor * dt; // proportional turn
+          // Cap absolute rate to avoid whiplash
+          let maxRate = 1.2; // rad/s base cap
+          if (this.input.run) maxRate *= 1.4; // higher cap when sprinting
+          const maxStep = maxRate * dt;
+          step = THREE.MathUtils.clamp(step, -maxStep, maxStep);
           this.camYaw += step;
         }
       }
@@ -336,20 +367,28 @@ export class CatController {
       const forwardDir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
       // Invert right vector so A/D match camera view intuitively
       const rightDir = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
-      dir.copy(forwardDir).multiplyScalar(forward).add(rightDir.multiplyScalar(right)).normalize();
+      // Build intended movement vector in world space using raw input strengths
+      const intend = new THREE.Vector3().copy(forwardDir).multiplyScalar(forward).add(rightDir.multiplyScalar(right));
+      const intendLen = intend.length();
+      const moveAmount = THREE.MathUtils.clamp(intendLen, 0, 1); // analog magnitude (gamepad/touch), keyboard => 1
+      if (intendLen > 1e-4) dir.copy(intend).multiplyScalar(1 / intendLen); // normalize to direction
 
       const v = this.body.velocity;
       if (this.onGround) {
         // Grounded: steer toward a target speed
-        const desiredVel = new CANNON.Vec3(dir.x * speed, v.y, dir.z * speed);
+        const base = this.input.sneak ? speedSneak : speedBase;
+        const effectiveSpeed = this.input.run ? speedRun : base * moveAmount;
+        const desiredVel = new CANNON.Vec3(dir.x * effectiveSpeed, v.y, dir.z * effectiveSpeed);
         const accel = 0.35;
         v.x += (desiredVel.x - v.x) * accel;
         v.z += (desiredVel.z - v.z) * accel;
       } else {
         // Airborne: small additive nudge in input direction; scale by dt so it's framerate-independent
         const airNudgeAccel = 0.5; // per-second acceleration scale
-        v.x += dir.x * speed * airNudgeAccel * dt;
-        v.z += dir.z * speed * airNudgeAccel * dt;
+        const base = this.input.sneak ? speedSneak : speedBase;
+        const effectiveSpeed = this.input.run ? speedRun : base * moveAmount;
+        v.x += dir.x * effectiveSpeed * airNudgeAccel * dt;
+        v.z += dir.z * effectiveSpeed * airNudgeAccel * dt;
       }
     } else {
       // Apply ground friction only when grounded and idle
