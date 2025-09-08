@@ -1,0 +1,11 @@
+{
+  "name": "Cat Mouse Hunter",
+  "short_name": "CatMouse",
+  "start_url": "/cat-mouse-hunter/",
+  "scope": "/cat-mouse-hunter/",
+  "display": "fullscreen",
+  "background_color": "#000000",
+  "theme_color": "transparent",
+  "orientation": "any",
+  "icons": []
+}
