@@ -36,6 +36,8 @@ export class Mouse {
     inward: THREE.Vector3;
     room: THREE.Box3;
   } | null = null;
+  // Per-pursuit toggle: whether to seek holes during the current chase
+  private seekHoleThisPursuit: boolean | null = null;
   // Erratic steering when pursued
   private erraticTimer = 0;
   private erraticAngle = 0; // radians, applied around Y to steering dir
@@ -145,51 +147,77 @@ export class Mouse {
     const distToCat = pos.distanceTo(catPos);
     const pursued = distToCat < 7.0; // close enough to be considered chasing
 
-    // On first transition to pursued, immediately change direction once
+    // On first transition to pursued, flip a coin for hole-seeking, then pick an initial flee direction
     if (pursued && !this.wasPursued) {
-      // Squeak once when first noticing the player
       this.sfx?.mouseSqueek();
-      // Rotate current desired direction by a random angle within ±90° and set a new waypoint
-      const hasDir = dir.lengthSq() > 0.0001;
-      if (!hasDir) {
-        // establish a default forward if no dir yet
-        dir.set(1, 0, 0);
-      }
-      const maxTurn = (90 * Math.PI) / 180;
-      const turn = (Math.random() * 2 - 1) * maxTurn;
-      const sin = Math.sin(turn);
-      const cos = Math.cos(turn);
-      const rx = dir.x * cos - dir.z * sin;
-      const rz = dir.x * sin + dir.z * cos;
-      const newDir = new THREE.Vector3(rx, 0, rz).normalize();
+      // 50% chance to enable hole seeking for this pursuit
+      this.seekHoleThisPursuit = Math.random() < 0.5;
+      const away = new THREE.Vector3(pos.x - catPos.x, 0, pos.z - catPos.z).normalize();
+      const halfCone = (100 * Math.PI) / 180; // 200° cone centered on away-from-player
+      const delta = randRange(-halfCone, halfCone);
+      const s = Math.sin(delta), c = Math.cos(delta);
+      const ndx = away.x * c - away.z * s;
+      const ndz = away.x * s + away.z * c;
+      const newDir = new THREE.Vector3(ndx, 0, ndz).normalize();
       const step = randRange(1.2, 2.5);
       const b = this.bounds;
       const marginIn = 0.8;
       const ntx = clamp(pos.x + newDir.x * step, b.min.x + marginIn, b.max.x - marginIn);
       const ntz = clamp(pos.z + newDir.z * step, b.min.z + marginIn, b.max.z - marginIn);
       this.target = new THREE.Vector3(ntx, 0, ntz);
+      this.fleeCommitDir = newDir.clone();
+      this.fleeCommitTimer = 0.3;
       dir.copy(newDir);
+      // If seeking holes this pursuit, try to immediately aim toward the nearest hole in same room
+      if (this.seekHoleThisPursuit && this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
+        const myPos = new THREE.Vector3(this.body.position.x, 0.5, this.body.position.z);
+        let nearest: { position: THREE.Vector3; inward: THREE.Vector3; room: THREE.Box3 } | null = null;
+        let bestD = Infinity;
+        for (const h of this.holes) {
+          if (!h.room.containsPoint(myPos)) continue;
+          const d = myPos.distanceTo(h.position);
+          if (d < bestD) {
+            bestD = d;
+            nearest = h;
+          }
+        }
+        if (nearest) {
+          const aim = nearest.position.clone().addScaledVector(nearest.inward, -0.1);
+          this.target = aim;
+          const flatPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
+          dir.copy(aim).sub(flatPos).normalize();
+        }
+      }
     }
 
-    // Add erratic movement when pursued: change heading every 0.2s within +/-90 degrees
+    // Add erratic movement when pursued: random changes within a 200° cone away from the player
     if (pursued) {
+      // decrement commit timer and reuse a committed flee direction if valid
+      this.fleeCommitTimer = Math.max(0, this.fleeCommitTimer - dt);
+      const away = new THREE.Vector3(pos.x - catPos.x, 0, pos.z - catPos.z);
+      if (away.lengthSq() < 1e-6) away.set(1, 0, 0);
+      away.normalize();
       this.erraticTimer -= dt;
       if (this.erraticTimer <= 0) {
-        const maxJitter = (60 * Math.PI) / 180; // 90 degrees in radians
-        this.erraticAngle = (Math.random() * 2 - 1) * maxJitter;
+        const halfCone = (100 * Math.PI) / 180; // 200° total around away
+        const delta = randRange(-halfCone, halfCone);
+        const s = Math.sin(delta), c = Math.cos(delta);
+        const ndx = away.x * c - away.z * s;
+        const ndz = away.x * s + away.z * c;
         this.erraticTimer = 0.2;
+        this.fleeCommitDir = new THREE.Vector3(ndx, 0, ndz).normalize();
+        this.fleeCommitTimer = Math.max(this.fleeCommitTimer, 0.25);
       }
-      if (dir.lengthSq() > 0.0001) {
-        const sin = Math.sin(this.erraticAngle);
-        const cos = Math.cos(this.erraticAngle);
-        const rx = dir.x * cos - dir.z * sin;
-        const rz = dir.x * sin + dir.z * cos;
-        dir.set(rx, 0, rz).normalize();
+      if (this.fleeCommitDir) {
+        dir.copy(this.fleeCommitDir);
       }
     } else {
       // Reset erratic steering when not pursued
       this.erraticAngle = 0;
       this.erraticTimer = Math.max(this.erraticTimer, 0);
+      this.fleeCommitTimer = 0;
+      this.fleeCommitDir = null;
+      this.seekHoleThisPursuit = null;
 
       // Normal movement jitter: every 0.25s rotate heading by up to ±35°
       this.wanderJitterTimer -= dt;
@@ -205,8 +233,13 @@ export class Mouse {
       }
     }
 
-    // If near a mouse hole, bias direction to point to it instead of random jitters
-    if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
+    // If near a mouse hole, bias direction to point to it (only when allowed this pursuit)
+    const allowHoleSeek =
+      this.holeIgnoreTimer <= 0 &&
+      this.holes &&
+      this.holes.length > 0 &&
+      (!pursued || this.seekHoleThisPursuit === true);
+    if (allowHoleSeek) {
       // Double seek radius when pursued to prefer holes sooner
       const seekRadius = pursued ? 12 : 6;
       const myPos = new THREE.Vector3(this.body.position.x, 0.5, this.body.position.z);
@@ -264,8 +297,13 @@ export class Mouse {
     v.x += (dir.x * this.speed * speedMul - v.x) * 0.2;
     v.z += (dir.z * this.speed * speedMul - v.z) * 0.2;
 
-    // Enter mouse hole if within a slim horizontal gate in front of the hole
-    if (this.holeIgnoreTimer <= 0 && this.holes && this.holes.length > 0) {
+    // Enter mouse hole if within a slim horizontal gate in front of the hole (only when allowed)
+    if (
+      this.holeIgnoreTimer <= 0 &&
+      this.holes &&
+      this.holes.length > 0 &&
+      (!pursued || this.seekHoleThisPursuit === true)
+    ) {
       const myPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
       let enteredFrom: {
         position: THREE.Vector3;

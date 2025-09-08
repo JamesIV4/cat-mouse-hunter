@@ -416,35 +416,11 @@ export class Level {
           const maxZ = Math.min(A.max.z, B.max.z) - edgeMargin;
           if (maxZ > minZ) {
             const addVertical = (x: number) => {
-              // First doorway at random along overlap
-              const z1 = randRange(minZ, maxZ);
-              const p1 = new THREE.Vector3(x, 0, z1);
-              roomOpenings[i].push(p1);
-              roomOpenings[j].push(p1);
-              // Chance for a second doorway, ensure spacing and bounds
-              if (Math.random() < 0.35) {
-                const minGap = doorHalf * 2 + 0.8;
-                // Try left or right side regions where there is room
-                const leftMax = z1 - minGap;
-                const rightMin = z1 + minGap;
-                const canLeft = leftMax > minZ;
-                const canRight = rightMin < maxZ;
-                if (canLeft || canRight) {
-                  let z2: number;
-                  if (canLeft && canRight) {
-                    // Randomly choose a side
-                    if (Math.random() < 0.5) z2 = randRange(minZ, leftMax);
-                    else z2 = randRange(rightMin, maxZ);
-                  } else if (canLeft) {
-                    z2 = randRange(minZ, leftMax);
-                  } else {
-                    z2 = randRange(rightMin, maxZ);
-                  }
-                  const p2 = new THREE.Vector3(x, 0, z2);
-                  roomOpenings[i].push(p2);
-                  roomOpenings[j].push(p2);
-                }
-              }
+              // Single doorway at random along overlap
+              const z = randRange(minZ, maxZ);
+              const p = new THREE.Vector3(x, 0, z);
+              roomOpenings[i].push(p);
+              roomOpenings[j].push(p);
             };
             if (Math.abs(A.max.x - B.min.x) < eps) {
               addVertical(A.max.x);
@@ -465,31 +441,10 @@ export class Level {
           const maxX = Math.min(A.max.x, B.max.x) - edgeMargin;
           if (maxX > minX) {
             const addHorizontal = (z: number) => {
-              const x1 = randRange(minX, maxX);
-              const p1 = new THREE.Vector3(x1, 0, z);
-              roomOpenings[i].push(p1);
-              roomOpenings[j].push(p1);
-              if (Math.random() < 0.35) {
-                const minGap = doorHalf * 2 + 0.8;
-                const leftMax = x1 - minGap;
-                const rightMin = x1 + minGap;
-                const canLeft = leftMax > minX;
-                const canRight = rightMin < maxX;
-                if (canLeft || canRight) {
-                  let x2: number;
-                  if (canLeft && canRight) {
-                    if (Math.random() < 0.5) x2 = randRange(minX, leftMax);
-                    else x2 = randRange(rightMin, maxX);
-                  } else if (canLeft) {
-                    x2 = randRange(minX, leftMax);
-                  } else {
-                    x2 = randRange(rightMin, maxX);
-                  }
-                  const p2 = new THREE.Vector3(x2, 0, z);
-                  roomOpenings[i].push(p2);
-                  roomOpenings[j].push(p2);
-                }
-              }
+              const x = randRange(minX, maxX);
+              const p = new THREE.Vector3(x, 0, z);
+              roomOpenings[i].push(p);
+              roomOpenings[j].push(p);
             };
             if (Math.abs(A.max.z - B.min.z) < eps) {
               addHorizontal(A.max.z);
