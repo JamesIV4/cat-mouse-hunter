@@ -5,7 +5,7 @@
   "scope": "/cat-mouse-hunter/",
   "display": "fullscreen",
   "background_color": "#000000",
-  "theme_color": "transparent",
+  "theme_color": "#000000",
   "orientation": "any",
   "icons": []
 }

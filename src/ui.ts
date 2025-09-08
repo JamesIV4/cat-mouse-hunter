@@ -134,8 +134,8 @@ export function enableMobileControls(input: Input) {
   const btnWrap = document.createElement("div");
   Object.assign(btnWrap.style as any, {
     position: "absolute",
-    right: "16px",
-    bottom: "16px",
+    right: "calc(16px + env(safe-area-inset-right))",
+    bottom: "calc(16px + env(safe-area-inset-bottom))",
     display: "flex",
     flexDirection: "column",
     gap: "16px",
