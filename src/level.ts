@@ -897,6 +897,7 @@ export class Level {
       placePropAgainstWallOnce(this.world, this.scene, rooms[ri], roomOpenings[ri], {
         modelUrl: "../models/couch/couch.fbx",
         textureUrl: "../models/couch/couch.jpg",
+        textureBrightness: 3,
         targetHeight: 2,
         inwardOffset: 1.35,
         doorHalf: 1.2,

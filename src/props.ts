@@ -218,6 +218,13 @@ export function placePropAgainstWallOnce(
         const inwardOffset = opts.inwardOffset ?? 0.08;
         pos.add(inward.clone().multiplyScalar(inwardOffset));
         const inst = base.clone(true);
+        // Ensure per-instance materials so brightness/other tweaks don't affect cached/shared mats
+        inst.traverse((o: any) => {
+          if (o && o.isMesh && o.material) {
+            if (Array.isArray(o.material)) o.material = o.material.map((m: any) => (m && m.clone ? m.clone() : m));
+            else if (o.material.clone) o.material = o.material.clone();
+          }
+        });
         // Apply normalized target height or explicit scale first
         if (opts.targetHeight && opts.targetHeight > 0) {
           const preBox = new THREE.Box3().setFromObject(inst);
@@ -326,6 +333,13 @@ export function placePropAt(
 ) {
   loadModelCached(opts.modelUrl, opts.textureUrl).then((base) => {
     const inst = base.clone(true);
+    // Ensure per-instance materials so brightness/other tweaks don't affect cached/shared mats
+    inst.traverse((o: any) => {
+      if (o && o.isMesh && o.material) {
+        if (Array.isArray(o.material)) o.material = o.material.map((m: any) => (m && m.clone ? m.clone() : m));
+        else if (o.material.clone) o.material = o.material.clone();
+      }
+    });
     // Normalize to target height and custom scale
     if (opts.targetHeight && opts.targetHeight > 0) {
       const preBox = new THREE.Box3().setFromObject(inst);
