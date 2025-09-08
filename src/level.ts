@@ -539,8 +539,6 @@ export class Level {
       this.spawnPoints = this.spawnPoints.filter(spawnOK);
     }
 
-    // Note: couches are placed later via prop helpers; no footprint tracking needed here.
-
     // Mouse holes: small black arch shapes along interior walls/baseboards
     const holeMat = new THREE.MeshStandardMaterial({
       color: 0x000000,
@@ -560,8 +558,6 @@ export class Level {
       const roomCenter = new THREE.Vector3((room.min.x + room.max.x) / 2, 0, (room.min.z + room.max.z) / 2);
       const toCenter = new THREE.Vector3().subVectors(roomCenter, mid).setY(0).normalize();
       const inward = n.dot(toCenter) > 0 ? n : n.clone().multiplyScalar(-1);
-
-      // Note: no special-case blocking by couches; mouse holes are placed independently now.
 
       // Do not place holes where a doorway is carved on this wall segment
       const epsEdge = 1e-3;
@@ -902,7 +898,7 @@ export class Level {
         modelUrl: "../models/couch/couch.fbx",
         textureUrl: "../models/couch/couch.jpg",
         targetHeight: 2,
-        inwardOffset: 0.12,
+        inwardOffset: 1.35,
         doorHalf: 1.2,
         doorMargin: 0.6,
         shrink: 0.9,
@@ -913,27 +909,6 @@ export class Level {
         },
       });
     }
-
-    // (old doorway helpers removed)
-    // (old corridor/box helpers removed)
-    // (old couch intersection helper removed)
-
-    // (old couch wall placement helper removed)
-
-    for (let ri = 0; ri < rooms.length; ri++) {
-      const r = rooms[ri];
-      const cx = (r.min.x + r.max.x) / 2,
-        cz = (r.min.z + r.max.z) / 2;
-      // Couches along walls (avoid doorways)
-      // Count total to enforce a minimum later
-      // First stochastic pass
-      // Accumulator defined after loop
-    }
-    // (old multi-couch placement removed)
-
-    // (old mouse-hole cleanup related to couches removed)
-
-    // (old spawn-point cleanup related to couches removed)
 
     // Clutter: dynamic physics objects biased to kid-friendly rooms
     // Build weighted room list based on semantic labels
