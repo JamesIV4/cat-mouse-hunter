@@ -370,7 +370,9 @@ export class CatController {
       // Build intended movement vector in world space using raw input strengths
       const intend = new THREE.Vector3().copy(forwardDir).multiplyScalar(forward).add(rightDir.multiplyScalar(right));
       const intendLen = intend.length();
-      const moveAmount = THREE.MathUtils.clamp(intendLen, 0, 1); // analog magnitude (gamepad/touch), keyboard => 1
+      // Exponential scaling (gamma < 1) so small input travels faster than linear
+      const rawAmount = THREE.MathUtils.clamp(intendLen, 0, 1); // 0..1
+      const moveAmount = Math.pow(rawAmount, 0.6); // bias toward higher output
       if (intendLen > 1e-4) dir.copy(intend).multiplyScalar(1 / intendLen); // normalize to direction
 
       const v = this.body.velocity;

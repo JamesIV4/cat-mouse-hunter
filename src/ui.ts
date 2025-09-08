@@ -102,8 +102,9 @@ export function enableMobileControls(input: Input) {
   // Joystick elements (hidden until touch)
   const joyBase = document.createElement("div");
   const joyKnob = document.createElement("div");
-  const JOY_RADIUS = 80; // px
-  const KNOB_RADIUS = 36; // px
+  // Smaller joystick so it reaches max values with less travel
+  const JOY_RADIUS = 60; // px (was 80)
+  const KNOB_RADIUS = 28; // px (was 36)
   Object.assign(joyBase.style as any, {
     position: "absolute",
     width: `${JOY_RADIUS * 2}px`,
