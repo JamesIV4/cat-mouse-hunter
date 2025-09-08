@@ -17,6 +17,12 @@ export class Input {
   // Suppress gamepad A being treated as jump until A is released
   private suppressPadJumpLatched = false;
 
+  // Virtual (touch) controls
+  vMoveX = 0; // virtual stick x (-1..1)
+  vMoveY = 0; // virtual stick y (-1..1, up positive)
+  vRun = false; // sprint button
+  vJump = false; // jump button
+
   constructor(private dom: HTMLElement | Document = document) {
     this.bind();
   }
@@ -75,25 +81,45 @@ export class Input {
   }
 
   get forward() {
-    return (this.keys["KeyW"] ? 1 : 0) + (this.keys["ArrowUp"] ? 1 : 0) + Math.max(0, this.gpMoveY);
+    return (
+      (this.keys["KeyW"] ? 1 : 0) +
+      (this.keys["ArrowUp"] ? 1 : 0) +
+      Math.max(0, this.gpMoveY) +
+      Math.max(0, this.vMoveY)
+    );
   }
   get backward() {
-    return (this.keys["KeyS"] ? 1 : 0) + (this.keys["ArrowDown"] ? 1 : 0) + Math.max(0, -this.gpMoveY);
+    return (
+      (this.keys["KeyS"] ? 1 : 0) +
+      (this.keys["ArrowDown"] ? 1 : 0) +
+      Math.max(0, -this.gpMoveY) +
+      Math.max(0, -this.vMoveY)
+    );
   }
   get left() {
-    return (this.keys["KeyA"] ? 1 : 0) + (this.keys["ArrowLeft"] ? 1 : 0) + Math.max(0, -this.gpMoveX);
+    return (
+      (this.keys["KeyA"] ? 1 : 0) +
+      (this.keys["ArrowLeft"] ? 1 : 0) +
+      Math.max(0, -this.gpMoveX) +
+      Math.max(0, -this.vMoveX)
+    );
   }
   get right() {
-    return (this.keys["KeyD"] ? 1 : 0) + (this.keys["ArrowRight"] ? 1 : 0) + Math.max(0, this.gpMoveX);
+    return (
+      (this.keys["KeyD"] ? 1 : 0) +
+      (this.keys["ArrowRight"] ? 1 : 0) +
+      Math.max(0, this.gpMoveX) +
+      Math.max(0, this.vMoveX)
+    );
   }
   get jump() {
     const space = !!this.keys["Space"];
     const padA = this.isPadButton(0) && !this.suppressPadJumpLatched; // ignore A when suppressed
-    return space || padA;
+    return space || padA || this.vJump;
   }
   get run() {
     const btn = this.getPadButtonValue(7) > 0.5 || this.isPadButton(5); // RT or RB
-    return !!this.keys["ShiftLeft"] || !!this.keys["ShiftRight"] || btn;
+    return !!this.keys["ShiftLeft"] || !!this.keys["ShiftRight"] || btn || this.vRun;
   }
   get sneak() {
     const btn = this.getPadButtonValue(6) > 0.5 || this.isPadButton(4); // LT or LB

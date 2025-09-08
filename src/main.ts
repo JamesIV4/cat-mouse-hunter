@@ -4,7 +4,7 @@ import { CatController } from "./cat";
 import { Mouse } from "./mouse";
 import { Level, LevelSpec } from "./level";
 import { Input } from "./input";
-import { UI } from "./ui";
+import { UI, enableMobileControls, consumeBannerAccept } from "./ui";
 import { toggleColliderDebug } from "./props";
 import { Sound } from "./audio";
 import { ParticleSystem } from "./particles";
@@ -41,21 +41,43 @@ const world = createWorld();
 const input = new Input(document);
 const sfx = new Sound();
 
-// Pointer lock for seamless mouse look
+// Simple mobile detection
+const isMobile = (() => {
+  const mq = (window as any).matchMedia ? window.matchMedia("(pointer: coarse)") : null;
+  const coarse = mq ? mq.matches : false;
+  const touch = (navigator as any).maxTouchPoints ? (navigator as any).maxTouchPoints > 0 : false;
+  return coarse || touch;
+})();
+
+// Pointer lock for seamless mouse look (desktop only)
 const canvas = renderer.domElement;
 canvas.style.outline = "none";
 canvas.tabIndex = 0;
-canvas.addEventListener("click", () => {
-  if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock();
-  }
-  sfx.resume();
-});
-document.addEventListener("pointerlockchange", () => {
-  const locked = document.pointerLockElement === canvas;
-  const hint = document.getElementById("lockHint") as HTMLElement | null;
-  if (hint) hint.style.display = locked ? "none" : "block";
-});
+if (!isMobile) {
+  canvas.addEventListener("click", () => {
+    if (document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock();
+    }
+    sfx.resume();
+  });
+  document.addEventListener("pointerlockchange", () => {
+    const locked = document.pointerLockElement === canvas;
+    const hint = document.getElementById("lockHint") as HTMLElement | null;
+    if (hint) hint.style.display = locked ? "none" : "block";
+  });
+} else {
+  // On mobile, resume audio on first interaction via touch anywhere
+  window.addEventListener(
+    "touchstart",
+    () => {
+      sfx.resume();
+    },
+    { once: true, passive: true }
+  );
+}
+
+// Enable mobile on-screen controls
+enableMobileControls(input);
 
 // Sensitivity slider
 const sens = document.getElementById("sensitivity") as HTMLInputElement | null;
@@ -223,9 +245,25 @@ function loop() {
       UI.setCaught(caught);
       UI.setRemaining(remaining);
       if (caught >= required && !bannerVisible) {
-        UI.showBanner(
-          `<h2>House cleared!</h2><p>You caught ${caught} mice.</p><p>Press <b>N</b> for the next house.</p>`
-        );
+        const html = isMobile
+          ? `<h2>House cleared!</h2>
+             <p>You caught ${caught} mice.</p>
+             <p>Tap <b>Next</b> to continue.</p>
+             <div style="margin-top:10px;display:flex;justify-content:center;">
+               <button id="nextBtn" style="
+                 padding:10px 16px;
+                 font-family: system-ui, sans-serif;
+                 font-size:16px;
+                 font-weight:700;
+                 border-radius:10px;
+                 border:none;
+                 background:#fff;
+                 color:#000;
+                 box-shadow:0 6px 16px rgba(0,0,0,0.35);
+               ">Next ▶</button>
+             </div>`
+          : `<h2>House cleared!</h2><p>You caught ${caught} mice.</p><p>Press <b>N</b> for the next house.</p>`;
+        UI.showBanner(html);
         bannerVisible = true;
         // Soft purr while banner is visible
         sfx.startCatPurr();
@@ -237,7 +275,7 @@ function loop() {
   if (input.restart) {
     createLevel(currentLevel);
   }
-  if ((input.next || input.consumePadAccept()) && caught >= required) {
+  if ((input.next || input.consumePadAccept() || consumeBannerAccept()) && caught >= required) {
     currentLevel++;
     createLevel(currentLevel);
   }

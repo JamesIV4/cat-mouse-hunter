@@ -46,6 +46,7 @@
         border-radius: 12px;
         display: none;
         min-width: 320px;
+        z-index: 50;
       }
       .controls {
         position: absolute;
@@ -86,6 +87,10 @@
       }
       a {
         color: #9ad1ff;
+      }
+      /* Hide desktop controls overlay on mobile (coarse pointer devices) */
+      @media (pointer: coarse) {
+        .controls { display: none; }
       }
     </style>
   </head>
