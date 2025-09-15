@@ -308,7 +308,7 @@ export class CatController {
     const speedBase = 12.0;
     const speedRun = speedBase * 1.75;
     const speedSneak = 2.0;
-    const speed = this.input.sneak ? speedSneak : this.input.run ? speedRun : speedBase;
+    const speed = this.input.run ? speedRun : speedBase;
 
     if (this.onGround) {
       if (controlsEnabled && this.input.jump) {
@@ -331,7 +331,7 @@ export class CatController {
           this.body.velocity.z = vz + hz * add;
         }
       } else if (moving) {
-        this.state = this.input.sneak ? "Sneak" : this.input.run ? "Run" : "Walk";
+        this.state = this.input.run ? "Run" : "Walk";
       } else {
         this.state = "Idle";
       }
@@ -359,8 +359,7 @@ export class CatController {
       const v = this.body.velocity;
       if (this.onGround) {
         // Grounded: steer toward a target speed
-        const base = this.input.sneak ? speedSneak : speedBase;
-        const effectiveSpeed = this.input.run ? speedRun : base * moveAmount;
+        const effectiveSpeed = this.input.run ? speedRun : speedBase * moveAmount;
         const desiredVel = new CANNON.Vec3(dir.x * effectiveSpeed, v.y, dir.z * effectiveSpeed);
         const accel = 0.35;
         v.x += (desiredVel.x - v.x) * accel;
@@ -368,8 +367,7 @@ export class CatController {
       } else {
         // Airborne: small additive nudge in input direction; scale by dt so it's framerate-independent
         const airNudgeAccel = 0.5; // per-second acceleration scale
-        const base = this.input.sneak ? speedSneak : speedBase;
-        const effectiveSpeed = this.input.run ? speedRun : base * moveAmount;
+        const effectiveSpeed = this.input.run ? speedRun : speedBase * moveAmount;
         v.x += dir.x * effectiveSpeed * airNudgeAccel * dt;
         v.z += dir.z * effectiveSpeed * airNudgeAccel * dt;
       }
