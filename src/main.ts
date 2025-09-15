@@ -1,7 +1,4 @@
 import * as THREE from "three";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
 import { createWorld, CANNON } from "./physics";
 import { CatController, CatState } from "./cat";
 import { Mouse } from "./mouse";
@@ -24,18 +21,6 @@ scene.background = new THREE.Color(0x2d3f4d);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 2.8, 4.2);
-
-// Post-processing pipeline for ambient occlusion
-const composer = new EffectComposer(renderer);
-composer.setSize(window.innerWidth, window.innerHeight);
-composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-const renderPass = new RenderPass(scene, camera);
-composer.addPass(renderPass);
-const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
-ssaoPass.kernelRadius = 14;
-ssaoPass.minDistance = 0.01;
-ssaoPass.maxDistance = 0.25;
-composer.addPass(ssaoPass);
 
 // Lights
 const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 2);
