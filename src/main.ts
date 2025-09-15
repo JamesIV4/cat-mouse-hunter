@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { createWorld, CANNON } from "./physics";
-import { CatController } from "./cat";
+import { CatController, CatState } from "./cat";
 import { Mouse } from "./mouse";
 import { Level, LevelSpec } from "./level";
 import { Input } from "./input";
@@ -17,16 +17,16 @@ renderer.shadowMap.enabled = true;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x22303a);
+scene.background = new THREE.Color(0x2d3f4d);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 2.8, 4.2);
 
 // Lights
-const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.6);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 2);
 scene.add(hemi);
 
-const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+const sun = new THREE.DirectionalLight(0xffffff, 2);
 sun.position.set(10, 15, 8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -97,6 +97,11 @@ let currentLevel = 1;
 const particles = new ParticleSystem(world, scene);
 particles.prewarm();
 
+// Scratch objects reused each frame to avoid pressure on the GC.
+const scratchPlayerPos = new THREE.Vector3();
+const scratchCatPos = new THREE.Vector3();
+const scratchMouseTargets: THREE.Object3D[] = [];
+
 function specForLevel(n: number): LevelSpec {
   const mouseCount = 4 + Math.floor(n * 1.5);
   // Scale house size with level
@@ -124,13 +129,16 @@ let required = 0;
 let remaining = 0;
 let bannerVisible = false;
 let introVisible = false;
+let lastUIState: CatState | null = null;
+let lastRoomType: string | null = null;
 // Defer mouse spawning on initial intro
 let pendingMiceSpawn = false;
 let pendingSpec: LevelSpec | null = null;
 let levelStartPos: THREE.Vector3 | null = null;
 
 function createLevel(n: number, spawnMice: boolean = true) {
-  level.generate(specForLevel(n));
+  const spec = specForLevel(n);
+  level.generate(spec);
   // Clear any leftover particles when a new level loads
   particles.clear();
   // Ensure any looping purr is stopped when leaving banner/starting a level
@@ -152,7 +160,6 @@ function createLevel(n: number, spawnMice: boolean = true) {
     if (m.alive) m.kill();
   }
   mice = [];
-  const spec = specForLevel(n);
   required = spec.miceRequired;
   // Defer mice spawn if requested
   pendingSpec = spec;
@@ -172,6 +179,7 @@ function createLevel(n: number, spawnMice: boolean = true) {
 // Helper: pick a spawn point far from an origin
 function pickSpawnFarFrom(origin: THREE.Vector3): THREE.Vector3 {
   const safeRadius = 5.0; // meters
+  const safeRadiusSq = safeRadius * safeRadius;
   // Prefer filtered spawnPoints if any remain
   if (level.spawnPoints.length > 0) {
     return level.spawnPoints[Math.floor(Math.random() * level.spawnPoints.length)].clone();
@@ -183,7 +191,7 @@ function pickSpawnFarFrom(origin: THREE.Vector3): THREE.Vector3 {
     const x = THREE.MathUtils.lerp(r.min.x + margin, r.max.x - margin, Math.random());
     const z = THREE.MathUtils.lerp(r.min.z + margin, r.max.z - margin, Math.random());
     const p = new THREE.Vector3(x, 0, z);
-    if (p.distanceTo(origin) >= safeRadius) return p;
+    if (p.distanceToSquared(origin) >= safeRadiusSq) return p;
   }
   // Last resort: push a point away from origin
   const dir = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5).normalize();
@@ -197,11 +205,12 @@ function spawnMiceNow() {
   // Create a no-spawn safe radius around the player's start so mice don't spawn too close
   const safeRadius = 5.0; // meters
   if (level.spawnPoints.length > 0) {
-    level.spawnPoints = level.spawnPoints.filter((p) => p.distanceTo(levelStartPos!) >= safeRadius);
+    const safeRadiusSq = safeRadius * safeRadius;
+    level.spawnPoints = level.spawnPoints.filter((p) => p.distanceToSquared(levelStartPos!) >= safeRadiusSq);
   }
   for (let i = 0; i < pendingSpec.mouseCount; i++) {
     const p = pickSpawnFarFrom(levelStartPos!);
-    const mouse = new Mouse(world, scene, p.clone(), level.worldBounds.clone(), level.mouseHoles, sfx);
+    const mouse = new Mouse(world, scene, p, level.worldBounds, level.mouseHoles, sfx);
     mouse.speed = pendingSpec.mouseSpeed;
     mice.push(mouse);
   }
@@ -298,27 +307,29 @@ function loop() {
     (loop as any)._lastScheme = scheme;
   }
   // Provide player position so level can pause far dynamic bodies
-  const playerPos = new THREE.Vector3(cat.body.position.x, 0, cat.body.position.z);
+  const playerPos = scratchPlayerPos.set(cat.body.position.x, 0, cat.body.position.z);
   level.update(dt, playerPos);
   particles.update(dt);
-  cat.update(
-    dt,
-    camera,
-    mice.filter((m) => m.alive).map((m) => m.mesh),
-    // Colliders for camera pushback: all static/dynamic meshes we added to the scene
-    level.meshes,
-    !controlsDisabled
-  );
+  const aliveTargets = scratchMouseTargets;
+  aliveTargets.length = 0;
+  for (const m of mice) {
+    if (m.alive) aliveTargets.push(m.mesh);
+  }
+  cat.update(dt, camera, aliveTargets, level.meshes, !controlsDisabled);
 
-  const catPos = playerPos.clone();
+  const catPos = scratchCatPos.copy(playerPos);
   for (const m of mice) m.update(dt, catPos);
 
   // catch detection: touching a mouse despawns and scores
+  const catMeshPos = cat.mesh.position;
+  const catchRadiusSq = 0.7 * 0.7;
   for (const m of mice) {
     if (!m.alive) continue;
-    const d = m.mesh.position.distanceTo(cat.mesh.position);
+    const dx = m.mesh.position.x - catMeshPos.x;
+    const dy = m.mesh.position.y - catMeshPos.y;
+    const dz = m.mesh.position.z - catMeshPos.z;
     // Slightly larger catch radius to match bigger mouse collider
-    if (d < 0.7) {
+    if (dx * dx + dy * dy + dz * dz < catchRadiusSq) {
       // Spawn a gentle star puff at the catch position
       const p = m.mesh.position.clone();
       particles.spawn(p, 18 + Math.floor(Math.random() * 10));
@@ -377,7 +388,10 @@ function loop() {
   }
   (loop as any)._prevF2 = f2;
 
-  UI.setState(cat.state);
+  if (cat.state !== lastUIState) {
+    UI.setState(cat.state);
+    lastUIState = cat.state;
+  }
 
   // render
   renderer.render(scene, camera);
@@ -389,7 +403,10 @@ function loop() {
   roomTypeTimer += dt;
   if (roomTypeTimer >= 0.25) {
     const t = level.getRoomTypeAtPosition(playerPos);
-    UI.setRoomType(t);
+    if (t !== lastRoomType) {
+      UI.setRoomType(t);
+      lastRoomType = t;
+    }
     roomTypeTimer = 0;
   }
   if (fpsTimer >= 0.5) {
